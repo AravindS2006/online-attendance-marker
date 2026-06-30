@@ -49,12 +49,6 @@ if (fs.existsSync(cachePath)) {
       if (Array.isArray(cacheData.classrooms)) {
         CLASSROOMS_DIRECTORY = cacheData.classrooms;
       }
-      // Always ensure the env-var admin account is present even after a roster sync/cache restore
-      const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-      const hasAdmin = FACULTY_DIRECTORY.some(f => f.username.toLowerCase() === adminUsername.toLowerCase());
-      if (!hasAdmin) {
-        FACULTY_DIRECTORY.unshift({ username: adminUsername, password: process.env.ADMIN_PASSWORD || 'adminpassword', name: 'ERP Administrator', dept: 'ALL' });
-      }
       console.log(`[DB Cache] Restored synchronized roster from disk cache (${COLLEGE_STUDENTS_DIRECTORY.length} students, ${FACULTY_DIRECTORY.length} faculty, ${CLASSROOMS_DIRECTORY.length} classrooms).`);
     }
   } catch (err) {
@@ -777,16 +771,9 @@ app.post('/api/database/sync-roster', async (req, res) => {
 
       FACULTY_DIRECTORY = data.faculty;
       COLLEGE_STUDENTS_DIRECTORY = data.students;
-
+      
       if (Array.isArray(data.classrooms)) {
         CLASSROOMS_DIRECTORY = data.classrooms;
-      }
-
-      // Re-inject the env-var admin account after sync so it is never wiped by sheet data
-      const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-      const hasAdmin = FACULTY_DIRECTORY.some(f => f.username.toLowerCase() === adminUsername.toLowerCase());
-      if (!hasAdmin) {
-        FACULTY_DIRECTORY.unshift({ username: adminUsername, password: process.env.ADMIN_PASSWORD || 'adminpassword', name: 'ERP Administrator', dept: 'ALL' });
       }
       
       // Cache synced directory locally on disk
