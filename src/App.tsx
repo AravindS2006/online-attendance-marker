@@ -1230,7 +1230,8 @@ export default function App() {
                           <button 
                             type="button"
                             onClick={() => {
-                              if (adminKey === 'adminpassword') {
+                              const expectedKey = import.meta.env.VITE_ADMIN_SYNC_PASSWORD || 'adminpassword';
+                              if (adminKey === expectedKey) {
                                 setIsAdminUnlocked(true);
                                 setAdminKey('');
                               } else {
