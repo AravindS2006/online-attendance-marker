@@ -220,20 +220,24 @@ app.post('/api/sessions', (req, res) => {
   // Helper to isolate sessions between multiple concurrent teachers
   const creatorUsername = req.body.creatorUsername || "admin";
 
-  // Find classroom in the synchronized database to load its geofence coordinates
-  const room = CLASSROOMS_DIRECTORY.find(
-    r => r.classCode.toString().toUpperCase().trim() === normalizedClassCode
-  );
+  // Check if teacher sent custom manual geofence coordinates
+  let geofence = req.body.geofence;
+  if (!geofence || typeof geofence.latitude !== 'number' || typeof geofence.longitude !== 'number') {
+    // Find classroom in the synchronized database to load its geofence coordinates
+    const room = CLASSROOMS_DIRECTORY.find(
+      r => r.classCode.toString().toUpperCase().trim() === normalizedClassCode
+    );
 
-  const geofence = room ? {
-    latitude: parseFloat(room.latitude),
-    longitude: parseFloat(room.longitude),
-    radius: parseFloat(room.radius) || 30
-  } : {
-    latitude: 12.9602, // Default Sri Sairam Engineering College center
-    longitude: 80.0570,
-    radius: 500 // Default campus geofence radius
-  };
+    geofence = room ? {
+      latitude: parseFloat(room.latitude),
+      longitude: parseFloat(room.longitude),
+      radius: parseFloat(room.radius) || 30
+    } : {
+      latitude: 12.9602, // Default Sri Sairam Engineering College center
+      longitude: 80.0570,
+      radius: 500 // Default campus geofence radius
+    };
+  }
 
   sessions[normalizedClassCode] = {
     id: normalizedClassCode, // Classroom code serves as the primary session ID (e.g. G3103)

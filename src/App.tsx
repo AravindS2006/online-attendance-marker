@@ -494,6 +494,11 @@ export default function App() {
           section,
           year,
           teacherName: activeTeacherName,
+          geofence: {
+            latitude: geofenceLat,
+            longitude: geofenceLng,
+            radius: geofenceRadius
+          },
           googleSheetUrl
         })
       });
