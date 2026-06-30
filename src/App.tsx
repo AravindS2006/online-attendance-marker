@@ -623,6 +623,24 @@ export default function App() {
     }
   };
 
+  // Automatically detect teacher's current GPS location
+  const detectTeacherLocation = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setGeofenceLat(parseFloat(position.coords.latitude.toFixed(6)));
+        setGeofenceLng(parseFloat(position.coords.longitude.toFixed(6)));
+      },
+      (error) => {
+        alert(`Failed to detect location: ${error.message}. Please verify GPS permissions.`);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
   // Open edit student dialog
   const openEditStudent = (st: StudentAttendance) => {
     setEditingStudent(st);
@@ -1390,7 +1408,16 @@ export default function App() {
                 </div>
 
                 <div>
-                  <h4 className="text-xs font-bold text-text-primary uppercase tracking-wide mt-4 border-b border-white/5 pb-1">Geofence Range Settings</h4>
+                  <div className="flex justify-between items-center border-b border-white/5 pb-1 mt-4">
+                    <h4 className="text-xs font-bold text-text-primary uppercase tracking-wide">Geofence Range Settings</h4>
+                    <button
+                      type="button"
+                      onClick={detectTeacherLocation}
+                      className="text-[10px] font-bold text-cyan-400 hover:underline flex items-center gap-1 border-none bg-transparent cursor-pointer"
+                    >
+                      <MapPin size={10} className="text-cyan-400" /> Detect My Location
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
                     <div>
                       <label className="block text-[10px] font-semibold text-text-secondary uppercase mb-1">Campus Latitude</label>
