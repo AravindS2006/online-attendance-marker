@@ -30,11 +30,11 @@ interface SharingRequest {
 
 interface ActiveSession {
   id: string;
-  courseName: string;
-  courseCode: string;
+  classroomCode: string;
   department: string;
   section: string;
   year: string;
+  teacherName: string;
   geofence: {
     latitude: number;
     longitude: number;
@@ -48,25 +48,24 @@ interface ActiveSession {
 }
 
 interface ClassLookupInfo {
-  courseName: string;
-  courseCode: string;
+  classroomCode: string;
   department: string;
   section: string;
   year: string;
+  teacherName: string;
 }
 
 export default function App() {
   const [view, setView] = useState<'landing' | 'teacher_login' | 'teacher_setup' | 'teacher_dashboard' | 'student' | 'student_success'>('landing');
   
   // Teacher states
-  const [courseName, setCourseName] = useState('Enter Course Name');
-  const [courseCode, setCourseCode] = useState('COURSE101');
+  const [teacherClassCode, setTeacherClassCode] = useState('');
   const [department, setDepartment] = useState('IT');
   const [section, setSection] = useState('A');
   const [year, setYear] = useState('3rd');
   const [geofenceLat, setGeofenceLat] = useState(SAIRAM_CAMPUS_COORDS.latitude);
   const [geofenceLng, setGeofenceLng] = useState(SAIRAM_CAMPUS_COORDS.longitude);
-  const [geofenceRadius, setGeofenceRadius] = useState(500); // 500 meters
+  const [geofenceRadius, setGeofenceRadius] = useState(30); // Default 30m classroom bounds
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [teacherCustomIp, setTeacherCustomIp] = useState('');
@@ -116,9 +115,9 @@ export default function App() {
   const [pendingApproval, setPendingApproval] = useState(false);
   const [markedStudentDetails, setMarkedStudentDetails] = useState<StudentAttendance | null>(null);
 
-  // Dynamic Courses states
-  const [coursesList, setCoursesList] = useState<{ courseCode: string; courseName: string; dept: string }[]>([]);
-  const [selectedCourseIndex, setSelectedCourseIndex] = useState<string>('');
+  // Dynamic Classrooms states
+  const [classroomsList, setClassroomsList] = useState<{ classCode: string; latitude: string; longitude: string; radius: string }[]>([]);
+  const [selectedClassroomIndex, setSelectedClassroomIndex] = useState<string>('');
 
   // Password Change states
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -181,14 +180,14 @@ export default function App() {
     }
   }, []);
 
-  // Sync active courses list when setup screen is loaded
+  // Sync active classrooms list when setup screen is loaded
   useEffect(() => {
     if (view === 'teacher_setup') {
-      fetch('/api/database/courses')
+      fetch('/api/database/classrooms')
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) {
-            setCoursesList(data);
+            setClassroomsList(data);
           }
         })
         .catch(console.error);
@@ -330,40 +329,44 @@ export default function App() {
     }
   }, [studentRegNo]);
 
-  // Real-time Class Access Code validation lookup
+  // Real-time Class Access Code validation lookup (Debounced Room check)
   useEffect(() => {
-    if (classCode.length === 5) {
+    if (classCode.length >= 3) {
       setIsClassSearching(true);
       setClassLookupError('');
-      fetch(`/api/sessions/lookup/${classCode}`)
-        .then(res => res.json())
-        .then(data => {
-          setIsClassSearching(false);
-          if (data.found) {
-            setClassLookup({
-              courseName: data.courseName,
-              courseCode: data.courseCode,
-              department: data.department,
-              section: data.section,
-              year: data.year
-            });
-            if (data.geofence) {
-              setClassGeofence(data.geofence);
+      const delayDebounce = setTimeout(() => {
+        fetch(`/api/sessions/lookup/${classCode}`)
+          .then(res => res.json())
+          .then(data => {
+            setIsClassSearching(false);
+            if (data.found) {
+              setClassLookup({
+                classroomCode: data.classroomCode,
+                department: data.department,
+                section: data.section,
+                year: data.year,
+                teacherName: data.teacherName
+              });
+              if (data.geofence) {
+                setClassGeofence(data.geofence);
+              }
+              // Automatically request location when class is verified
+              if (geoStatus === 'idle') {
+                requestStudentLocation();
+              }
+            } else {
+              setClassLookup(null);
+              setClassLookupError('❌ Classroom session not active. Check room code.');
             }
-            // Automatically request location when class is verified
-            if (geoStatus === 'idle') {
-              requestStudentLocation();
-            }
-          } else {
+          })
+          .catch(() => {
+            setIsClassSearching(false);
             setClassLookup(null);
-            setClassLookupError('❌ Class Access Code not found. Please check classroom TV.');
-          }
-        })
-        .catch(() => {
-          setIsClassSearching(false);
-          setClassLookup(null);
-          setClassLookupError('⚠️ Network connection failed.');
-        });
+            setClassLookupError('⚠️ Network connection failed.');
+          });
+      }, 400);
+
+      return () => clearTimeout(delayDebounce);
     } else {
       setClassLookup(null);
       setClassLookupError('');
@@ -476,28 +479,29 @@ export default function App() {
   // Create a new session (Teacher setup)
   const handleCreateSession = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!teacherClassCode) {
+      alert("Please enter or select a Classroom Code");
+      return;
+    }
     try {
       const res = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           creatorUsername: facultyUser,
-          courseName,
-          courseCode,
+          classCode: teacherClassCode.trim().toUpperCase(),
           department,
           section,
           year,
           teacherName: activeTeacherName,
-          geofence: {
-            latitude: geofenceLat,
-            longitude: geofenceLng,
-            radius: geofenceRadius
-          },
           googleSheetUrl
         })
       });
 
-      if (!res.ok) throw new Error("Failed to create session");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to create session");
+      }
       const data = await res.json();
       setActiveSession(data);
       
@@ -534,7 +538,7 @@ export default function App() {
       const data = await res.json();
       
       if (res.ok) {
-        setRosterSyncMsg(`✓ Loaded ${data.facultyCount} teachers, ${data.studentCount} students & ${data.courseCount || 0} courses!`);
+        setRosterSyncMsg(`✓ Loaded ${data.facultyCount} teachers, ${data.studentCount} students & ${data.classroomCount || 0} classrooms!`);
       } else {
         setRosterSyncMsg(`❌ Sync failed: ${data.error || 'Server error'}`);
       }
@@ -545,24 +549,23 @@ export default function App() {
     }
   };
 
-  // Handle course selector dropdown selection change
-  const handleCourseSelection = (indexStr: string) => {
-    setSelectedCourseIndex(indexStr);
+  // Handle classroom selector dropdown selection change
+  const handleClassroomSelection = (indexStr: string) => {
+    setSelectedClassroomIndex(indexStr);
     if (indexStr !== '') {
       const index = parseInt(indexStr);
-      const course = coursesList[index];
-      if (course) {
-        setCourseCode(course.courseCode);
-        setCourseName(course.courseName);
-        if (['IT', 'CSE', 'ECE', 'EEE', 'MECH', 'CIVIL'].includes(course.dept.toUpperCase())) {
-          setDepartment(course.dept.toUpperCase());
-        }
+      const room = classroomsList[index];
+      if (room) {
+        setTeacherClassCode(room.classCode);
+        setGeofenceLat(parseFloat(room.latitude));
+        setGeofenceLng(parseFloat(room.longitude));
+        setGeofenceRadius(parseInt(room.radius) || 30);
       }
     } else {
-      setCourseCode('');
-      setCourseName('');
+      setTeacherClassCode('');
     }
   };
+
 
   // Submit faculty password change request to backend (with robust JSON response validation bypassing CORS content-type masking)
   const handlePasswordChange = async (e: React.FormEvent) => {
@@ -1313,44 +1316,33 @@ export default function App() {
 
               <form onSubmit={handleCreateSession} className="space-y-4">
                 
-                {/* Linked course auto-population dropdown */}
+                {/* Linked Classroom Coordinates Load Selector */}
                 <div className="mb-2">
-                  <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Link Course from Sheet Database</label>
+                  <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Link Classroom from Sheet Database</label>
                   <select
-                    value={selectedCourseIndex}
-                    onChange={e => handleCourseSelection(e.target.value)}
+                    value={selectedClassroomIndex}
+                    onChange={e => handleClassroomSelection(e.target.value)}
                     className="glass-input text-xs"
                   >
-                    <option value="">-- Enter Course Details Manually --</option>
-                    {coursesList.map((course, idx) => (
-                      <option key={course.courseCode} value={idx}>
-                        [{course.courseCode}] {course.courseName} ({course.dept})
+                    <option value="">-- Enter Class Code Manually --</option>
+                    {classroomsList.map((room, idx) => (
+                      <option key={room.classCode} value={idx}>
+                        Room {room.classCode} ({room.radius}m Geofence)
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Course Code</label>
-                    <input 
-                      type="text" 
-                      value={courseCode} 
-                      onChange={e => setCourseCode(e.target.value.toUpperCase())}
-                      className="glass-input" 
-                      required 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Course Name</label>
-                    <input 
-                      type="text" 
-                      value={courseName} 
-                      onChange={e => setCourseName(e.target.value)}
-                      className="glass-input" 
-                      required 
-                    />
-                  </div>
+                <div>
+                  <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Classroom Code (e.g. G3103)</label>
+                  <input 
+                    type="text" 
+                    value={teacherClassCode} 
+                    onChange={e => setTeacherClassCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. G3103"
+                    className="glass-input uppercase" 
+                    required 
+                  />
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">
@@ -1428,6 +1420,8 @@ export default function App() {
                       onChange={e => setGeofenceRadius(parseInt(e.target.value))} 
                       className="glass-input py-2 text-sm"
                     >
+                      <option value={15}>15m (Classroom Desk Bounds)</option>
+                      <option value={30}>30m (Room Block Bounds)</option>
                       <option value={150}>150m (Strict Classroom Block)</option>
                       <option value={300}>300m (Departmental Wings)</option>
                       <option value={500}>500m (Main Sairam Campus)</option>
@@ -1501,10 +1495,10 @@ export default function App() {
                 <div className="w-full flex justify-between items-start border-b border-color pb-4">
                   <div className="text-left">
                     <span className="text-10 font-extrabold badge-cyan px-2.5 py-1 rounded-md uppercase tracking-wider">
-                      LIVE CLASS MARKING
+                      LIVE CLASSROOM MARKING
                     </span>
-                    <h3 className="text-2xl font-black mt-2 text-text-primary tracking-tight">{activeSession.courseName}</h3>
-                    <p className="text-xs text-text-secondary font-semibold">{activeSession.courseCode} • {activeSession.year} Year {activeSession.department} Sec {activeSession.section}</p>
+                    <h3 className="text-2xl font-black mt-2 text-text-primary tracking-tight">Classroom: {activeSession.classroomCode}</h3>
+                    <p className="text-xs text-text-secondary font-semibold">Faculty In-Charge: {activeSession.teacherName} • {activeSession.year} Year {activeSession.department} Sec {activeSession.section}</p>
                   </div>
                   
                   <div className="text-right">
@@ -1914,8 +1908,9 @@ export default function App() {
                       {classLookup && (
                         <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 text-emerald-400 text-xs rounded-xl mt-2 flex flex-col gap-1 text-left slide-up">
                           <div className="font-bold text-text-primary">✓ Class Found</div>
-                          <div><span className="text-text-secondary">Course:</span> <span className="font-semibold">{classLookup.courseCode} - {classLookup.courseName}</span></div>
-                          <div><span className="text-text-secondary">Target:</span> <span className="font-semibold">{classLookup.year} Year {classLookup.department} - Sec {classLookup.section}</span></div>
+                          <div><span className="text-text-secondary">Classroom Code:</span> <span className="font-semibold">{classLookup.classroomCode}</span></div>
+                          <div><span className="text-text-secondary">Instructor:</span> <span className="font-semibold">{classLookup.teacherName}</span></div>
+                          <div><span className="text-text-secondary">Target Roster:</span> <span className="font-semibold">{classLookup.year} Year {classLookup.department} - Sec {classLookup.section}</span></div>
                         </div>
                       )}
                     </div>
@@ -2130,9 +2125,9 @@ export default function App() {
       sheet.getRange("A1:G1").merge().setHorizontalAlignment("center");
       
       // Metadata Row 2
-      sheet.getRange("A2").setValue("Course Name & Code:");
+      sheet.getRange("A2").setValue("Classroom Code:");
       sheet.getRange("A2").setFontWeight("bold");
-      sheet.getRange("B2").setValue(data.metadata.courseCode + " - " + data.metadata.courseName);
+      sheet.getRange("B2").setValue(data.metadata.classroomCode);
       sheet.getRange("E2").setValue("Department:");
       sheet.getRange("E2").setFontWeight("bold");
       sheet.getRange("F2").setValue(data.metadata.department);
@@ -2294,9 +2289,9 @@ export default function App() {
       sheet.getRange("A1").setFontWeight("bold").setFontSize(14);
       sheet.getRange("A1:G1").merge().setHorizontalAlignment("center");
       
-      sheet.getRange("A2").setValue("Course Name & Code:");
+      sheet.getRange("A2").setValue("Classroom Code:");
       sheet.getRange("A2").setFontWeight("bold");
-      sheet.getRange("B2").setValue(data.metadata.courseCode + " - " + data.metadata.courseName);
+      sheet.getRange("B2").setValue(data.metadata.classroomCode);
       sheet.getRange("E2").setValue("Department:");
       sheet.getRange("E2").setFontWeight("bold");
       sheet.getRange("F2").setValue(data.metadata.department);
@@ -2630,26 +2625,32 @@ export default function App() {
       }
     }
 
-    var coursesSheet = ss.getSheetByName("Courses");
-    var coursesData = [];
-    if (coursesSheet) {
-      var coursesRows = coursesSheet.getDataRange().getValues();
-      var headers = coursesRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
+    var classroomsSheet = ss.getSheetByName("Classrooms");
+    var classroomsData = [];
+    if (classroomsSheet) {
+      var classroomsRows = classroomsSheet.getDataRange().getValues();
+      var headers = classroomsRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
       
-      for (var i = 1; i < coursesRows.length; i++) {
-        var row = coursesRows[i];
+      for (var i = 1; i < classroomsRows.length; i++) {
+        var row = classroomsRows[i];
         var item = {};
         for (var j = 0; j < headers.length; j++) {
           var key = headers[j];
-          if (key === "course code" || key === "code") item.courseCode = row[j].toString().toUpperCase().trim();
-          else if (key === "course name" || key === "name") item.courseName = row[j].toString().trim();
-          else if (key === "department" || key === "dept") item.dept = row[j].toString().trim();
+          if (key === "class code" || key === "classroom code" || key === "code") {
+            item.classCode = row[j].toString().toUpperCase().trim();
+          } else if (key === "latitude" || key === "lat") {
+            item.latitude = row[j].toString().trim();
+          } else if (key === "longitude" || key === "lng") {
+            item.longitude = row[j].toString().trim();
+          } else if (key === "radius") {
+            item.radius = row[j].toString().trim();
+          }
         }
-        if (item.courseCode && item.courseName) coursesData.push(item);
+        if (item.classCode && item.latitude && item.longitude) classroomsData.push(item);
       }
     }
     
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, courses: coursesData }))
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, classrooms: classroomsData }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
@@ -2719,26 +2720,32 @@ export default function App() {
       }
     }
 
-    var coursesSheet = ss.getSheetByName("Courses");
-    var coursesData = [];
-    if (coursesSheet) {
-      var coursesRows = coursesSheet.getDataRange().getValues();
-      var headers = coursesRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
+    var classroomsSheet = ss.getSheetByName("Classrooms");
+    var classroomsData = [];
+    if (classroomsSheet) {
+      var classroomsRows = classroomsSheet.getDataRange().getValues();
+      var headers = classroomsRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
       
-      for (var i = 1; i < coursesRows.length; i++) {
-        var row = coursesRows[i];
+      for (var i = 1; i < classroomsRows.length; i++) {
+        var row = classroomsRows[i];
         var item = {};
         for (var j = 0; j < headers.length; j++) {
           var key = headers[j];
-          if (key === "course code" || key === "code") item.courseCode = row[j].toString().toUpperCase().trim();
-          else if (key === "course name" || key === "name") item.courseName = row[j].toString().trim();
-          else if (key === "department" || key === "dept") item.dept = row[j].toString().trim();
+          if (key === "class code" || key === "classroom code" || key === "code") {
+            item.classCode = row[j].toString().toUpperCase().trim();
+          } else if (key === "latitude" || key === "lat") {
+            item.latitude = row[j].toString().trim();
+          } else if (key === "longitude" || key === "lng") {
+            item.longitude = row[j].toString().trim();
+          } else if (key === "radius") {
+            item.radius = row[j].toString().trim();
+          }
         }
-        if (item.courseCode && item.courseName) coursesData.push(item);
+        if (item.classCode && item.latitude && item.longitude) classroomsData.push(item);
       }
     }
     
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, courses: coursesData }))
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, classrooms: classroomsData }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))

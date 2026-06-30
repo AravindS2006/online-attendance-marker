@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Database persistence cache (contains synchronized student rosters & faculty passwords)
+roster_cache.json
+server/roster_cache.json
+api/roster_cache.json
+
+# Local Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

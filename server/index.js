@@ -23,26 +23,28 @@ let FACULTY_DIRECTORY = [
   { username: "admin", password: "adminpassword", name: "ERP Administrator", dept: "ALL" }
 ];
 
+// Default Classrooms Directory (Initial defaults - loads dynamically from Roster cache / sync)
+let CLASSROOMS_DIRECTORY = [
+  { classCode: "G3103", latitude: 12.9602, longitude: 80.0570, radius: 30 }
+];
+
 // Student Directory (Loads from disk cache or syncs live from Google Sheet)
 let COLLEGE_STUDENTS_DIRECTORY = [];
 
-// Mock Courses Directory (Initial defaults - loads dynamically from Roster cache / sync)
-let COURSES_DIRECTORY = [
-  { courseCode: "COURSE101", courseName: "Default Course Name", dept: "ALL" }
-];
-
 // Load Roster from Disk cache on boot if it exists (protects against node watch auto-restarts)
-const cachePath = path.join(__dirname, 'roster_cache.json');
+const cachePath = process.env.VERCEL 
+  ? '/tmp/roster_cache.json'
+  : path.join(__dirname, 'roster_cache.json');
 if (fs.existsSync(cachePath)) {
   try {
     const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
     if (Array.isArray(cacheData.faculty) && cacheData.faculty.length > 0 && Array.isArray(cacheData.students) && cacheData.students.length > 0) {
       FACULTY_DIRECTORY = cacheData.faculty;
       COLLEGE_STUDENTS_DIRECTORY = cacheData.students;
-      if (Array.isArray(cacheData.courses)) {
-        COURSES_DIRECTORY = cacheData.courses;
+      if (Array.isArray(cacheData.classrooms)) {
+        CLASSROOMS_DIRECTORY = cacheData.classrooms;
       }
-      console.log(`[DB Cache] Restored synchronized roster from disk cache (${COLLEGE_STUDENTS_DIRECTORY.length} students, ${FACULTY_DIRECTORY.length} faculty).`);
+      console.log(`[DB Cache] Restored synchronized roster from disk cache (${COLLEGE_STUDENTS_DIRECTORY.length} students, ${FACULTY_DIRECTORY.length} faculty, ${CLASSROOMS_DIRECTORY.length} classrooms).`);
     }
   } catch (err) {
     console.error("[DB Cache Error] Failed to read roster disk cache:", err.message);
@@ -189,50 +191,59 @@ app.get('/api/students/search', (req, res) => {
 
 // Lookup class session by code (Student manual entry check)
 app.get('/api/sessions/lookup/:code', (req, res) => {
-  const session = sessions[req.params.code];
+  const codeNormalized = req.params.code.toString().toUpperCase().trim();
+  const session = sessions[codeNormalized];
   if (!session) {
     return res.json({ found: false });
   }
   res.json({
     found: true,
-    courseName: session.courseName,
-    courseCode: session.courseCode,
+    classroomCode: session.classroomCode,
     department: session.department,
     section: session.section,
     year: session.year,
-    teacherName: session.teacherName || "Dr. R. Aravind",
+    teacherName: session.teacherName || "ERP Administrator",
     geofence: session.geofence
   });
 });
 
 // Create a new attendance session (Teacher)
 app.post('/api/sessions', (req, res) => {
-  const { courseName, courseCode, department, section, year, geofence, googleSheetUrl, teacherName } = req.body;
+  const { classCode, department, section, year, teacherName, googleSheetUrl } = req.body;
 
-  if (!courseName || !courseCode || !department || !section || !year) {
-    return res.status(400).json({ error: "Missing required fields" });
+  if (!classCode || !department || !section || !year) {
+    return res.status(400).json({ error: "Missing required classroom fields" });
   }
 
-  // Generate a unique 5-digit Class Code
-  const classCode = generateUniqueClassCode();
-  
-  // Helper to isolate sessions between multiple concurrent teachers
-  const creatorUsername = req.body.creatorUsername || "aravind";
+  const normalizedClassCode = classCode.toString().toUpperCase().trim();
 
-  sessions[classCode] = {
-    id: classCode, // Class code serves as the primary session ID
+  // Helper to isolate sessions between multiple concurrent teachers
+  const creatorUsername = req.body.creatorUsername || "admin";
+
+  // Find classroom in the synchronized database to load its geofence coordinates
+  const room = CLASSROOMS_DIRECTORY.find(
+    r => r.classCode.toString().toUpperCase().trim() === normalizedClassCode
+  );
+
+  const geofence = room ? {
+    latitude: parseFloat(room.latitude),
+    longitude: parseFloat(room.longitude),
+    radius: parseFloat(room.radius) || 30
+  } : {
+    latitude: 12.9602, // Default Sri Sairam Engineering College center
+    longitude: 80.0570,
+    radius: 500 // Default campus geofence radius
+  };
+
+  sessions[normalizedClassCode] = {
+    id: normalizedClassCode, // Classroom code serves as the primary session ID (e.g. G3103)
     creatorUsername: creatorUsername.toLowerCase().trim(),
-    courseName,
-    courseCode: courseCode.toUpperCase(),
+    classroomCode: normalizedClassCode,
     department,
     section,
     year,
-    teacherName: teacherName || "Dr. R. Aravind",
-    geofence: geofence || {
-      latitude: 12.9602, // Sri Sairam Engineering College center
-      longitude: 80.0570,
-      radius: 500 // meters
-    },
+    teacherName: teacherName || "ERP Administrator",
+    geofence,
     googleSheetUrl: googleSheetUrl || "",
     currentOtp: "",
     previousOtps: [],
@@ -245,10 +256,10 @@ app.post('/api/sessions', (req, res) => {
   };
 
   // Set the first OTP and start rotating
-  rotateSessionOtp(classCode);
-  startSessionInterval(classCode);
+  rotateSessionOtp(normalizedClassCode);
+  startSessionInterval(normalizedClassCode);
 
-  res.json({ sessionId: classCode, ...sessions[classCode], intervalId: undefined });
+  res.json({ sessionId: normalizedClassCode, ...sessions[normalizedClassCode], intervalId: undefined });
 });
 
 // Helper validation for instructor session isolation
@@ -292,12 +303,11 @@ async function syncSessionToSheetsInBackground(session) {
     const payload = {
       metadata: {
         title: "SRI SAIRAM ENGINEERING COLLEGE - CLASS ATTENDANCE REPORT",
-        courseCode: session.courseCode.toUpperCase(),
-        courseName: session.courseName,
+        classroomCode: session.classroomCode.toUpperCase(),
         department: session.department,
         section: session.section,
         year: session.year,
-        teacherName: session.teacherName || "Dr. R. Aravind",
+        teacherName: session.teacherName || "ERP Administrator",
         date: today,
         classCode: session.id
       },
@@ -325,12 +335,11 @@ async function syncSessionToSheetsInBackground(session) {
 
 // Get session OTP status (Student verification page)
 app.get('/api/sessions/:id/otp-status', (req, res) => {
-  const session = sessions[req.params.id];
+  const session = sessions[req.params.id.toString().toUpperCase().trim()];
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   res.json({
-    courseName: session.courseName,
-    courseCode: session.courseCode,
+    classroomCode: session.classroomCode,
     department: session.department,
     section: session.section,
     year: session.year,
@@ -341,7 +350,7 @@ app.get('/api/sessions/:id/otp-status', (req, res) => {
 
 // Student checks their device exception approval status (Public)
 app.get('/api/sessions/:id/approval-status/:regNo', (req, res) => {
-  const session = sessions[req.params.id];
+  const session = sessions[req.params.id.toString().toUpperCase().trim()];
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   const regNo = req.params.regNo.toLowerCase().trim();
@@ -359,7 +368,7 @@ app.get('/api/sessions/:id/approval-status/:regNo', (req, res) => {
 
 // Mark student attendance (Student)
 app.post('/api/sessions/:id/attend', async (req, res) => {
-  const session = sessions[req.params.id];
+  const session = sessions[req.params.id.toString().toUpperCase().trim()];
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   const { regNo, otp, token, fingerprint } = req.body;
@@ -663,12 +672,11 @@ app.post('/api/sessions/:id/sync-sheets', async (req, res) => {
     const payload = {
       metadata: {
         title: "SRI SAIRAM ENGINEERING COLLEGE - CLASS ATTENDANCE REPORT",
-        courseCode: session.courseCode.toUpperCase(),
-        courseName: session.courseName,
+        classroomCode: session.classroomCode.toUpperCase(),
         department: session.department,
         section: session.section,
         year: session.year,
-        teacherName: session.teacherName || "Dr. R. Aravind",
+        teacherName: session.teacherName || "ERP Administrator",
         date: today,
         classCode: session.id
       },
@@ -726,9 +734,9 @@ app.delete('/api/sessions/:id', (req, res) => {
   res.json({ status: "success", message: "Session closed successfully" });
 });
 
-// Retrieve Course database details (Used in Teacher setup dropdowns)
-app.get('/api/database/courses', (req, res) => {
-  res.json(COURSES_DIRECTORY);
+// Retrieve Classrooms database details (Used in Teacher setup dropdowns)
+app.get('/api/database/classrooms', (req, res) => {
+  res.json(CLASSROOMS_DIRECTORY);
 });
 
 // Dynamically synchronize the College Faculty & Student Roster database from Google Sheets
@@ -755,29 +763,29 @@ app.post('/api/database/sync-roster', async (req, res) => {
       FACULTY_DIRECTORY = data.faculty;
       COLLEGE_STUDENTS_DIRECTORY = data.students;
       
-      if (Array.isArray(data.courses)) {
-        COURSES_DIRECTORY = data.courses;
+      if (Array.isArray(data.classrooms)) {
+        CLASSROOMS_DIRECTORY = data.classrooms;
       }
       
       // Cache synced directory locally on disk
       try {
         fs.writeFileSync(
           cachePath,
-          JSON.stringify({ faculty: data.faculty, students: data.students, courses: COURSES_DIRECTORY }, null, 2)
+          JSON.stringify({ faculty: data.faculty, students: data.students, classrooms: CLASSROOMS_DIRECTORY }, null, 2)
         );
         console.log("[DB Cache] Synced roster written to disk cache.");
       } catch (err) {
         console.error("Failed to write roster disk cache:", err.message);
       }
       
-      console.log(`[DB Sync] Loaded ${FACULTY_DIRECTORY.length} faculty, ${COLLEGE_STUDENTS_DIRECTORY.length} students, and ${COURSES_DIRECTORY.length} courses from sheet.`);
+      console.log(`[DB Sync] Loaded ${FACULTY_DIRECTORY.length} faculty, ${COLLEGE_STUDENTS_DIRECTORY.length} students, and ${CLASSROOMS_DIRECTORY.length} classrooms from sheet.`);
       
       res.json({
         status: "success",
         message: "Successfully synchronized college database!",
         facultyCount: FACULTY_DIRECTORY.length,
         studentCount: COLLEGE_STUDENTS_DIRECTORY.length,
-        courseCount: COURSES_DIRECTORY.length
+        classroomCount: CLASSROOMS_DIRECTORY.length
       });
     } else {
       res.status(400).json({ 
