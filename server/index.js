@@ -18,9 +18,14 @@ const PORT = process.env.PORT || 5000;
 // 1. MOCK DATABASES (Sairam College ERP) - Switch to 'let' to allow live Google Sheet syncs
 // ==========================================
 
-// Default Faculty Directory (Sairam ERP Administrator - Replace with synced sheet later)
+// Default Faculty Directory (Sairam ERP Administrator - Loads dynamically from environment variables for Vercel)
 let FACULTY_DIRECTORY = [
-  { username: "admin", password: "adminpassword", name: "ERP Administrator", dept: "ALL" }
+  { 
+    username: process.env.ADMIN_USERNAME || "admin", 
+    password: process.env.ADMIN_PASSWORD || "adminpassword", 
+    name: "ERP Administrator", 
+    dept: "ALL" 
+  }
 ];
 
 // Default Classrooms Directory (Initial defaults - loads dynamically from Roster cache / sync)

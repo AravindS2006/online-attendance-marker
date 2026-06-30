@@ -588,7 +588,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: facultyUser || 'aravind',
+          username: facultyUser || 'admin',
           currentPassword,
           newPassword
         })
@@ -1207,12 +1207,6 @@ export default function App() {
                   Back to Landing
                 </button>
               </form>
-
-              <div className="p-4 bg-slate-50 border border-color rounded-xl text-left text-xs mt-6 space-y-1">
-                <div className="font-bold text-[10px] text-text-secondary uppercase">💡 Faculty Test Credentials:</div>
-                <div><span className="text-text-secondary">Faculty ID:</span> <code className="font-mono text-cyan-400 font-bold bg-cyan-500/10 px-1 py-0.5 rounded">aravind</code></div>
-                <div><span className="text-text-secondary">Password:</span> <code className="font-mono text-cyan-400 font-bold bg-cyan-500/10 px-1 py-0.5 rounded">sairam123</code></div>
-              </div>
 
               {/* Live Google Sheets Roster Sync Accordion */}
               <div className="mt-6 border-t border-color pt-4 text-left">
@@ -2891,7 +2885,7 @@ export default function App() {
                 <input 
                   type="text" 
                   required
-                  placeholder="e.g. Aravind R" 
+                  placeholder="e.g. Student Name" 
                   value={editStudentName} 
                   onChange={e => setEditStudentName(e.target.value)}
                   className="glass-input text-xs"
@@ -2903,7 +2897,7 @@ export default function App() {
                 <input 
                   type="text" 
                   required
-                  placeholder="e.g. 2303142510621003" 
+                  placeholder="e.g. 1234567890123456" 
                   value={editStudentRoll} 
                   onChange={e => setEditStudentRoll(e.target.value)}
                   className="glass-input text-xs"
