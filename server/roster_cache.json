@@ -1,0 +1,104 @@
+{
+  "faculty": [
+    {
+      "username": "rohith a",
+      "password": "Rohith@123",
+      "name": "Rohith A",
+      "dept": "ECE"
+    },
+    {
+      "username": "dhwarakesh",
+      "password": "Dhwara@123",
+      "name": "Dhwarakesh",
+      "dept": "ECE"
+    }
+  ],
+  "students": [
+    {
+      "regNo": "sec23ec001",
+      "rollNo": "2303412510621001",
+      "name": "Kavinilavan",
+      "dept": "ECE",
+      "sec": "C",
+      "year": "4th"
+    },
+    {
+      "regNo": "sec23ec002",
+      "rollNo": "2303412510621002",
+      "name": "Mohammed Ibrahim",
+      "dept": "AI&DS",
+      "sec": "B",
+      "year": "4th"
+    },
+    {
+      "regNo": "sec23ec003",
+      "rollNo": "2303412510621003",
+      "name": "Theena Thayalan",
+      "dept": "CSE",
+      "sec": "A",
+      "year": "4th"
+    },
+    {
+      "regNo": "sec23ec123",
+      "rollNo": "2303412510621003",
+      "name": "Aravind R",
+      "dept": "ECE",
+      "sec": "A",
+      "year": "3rd"
+    },
+    {
+      "regNo": "sec23ec124",
+      "rollNo": "2303412510621004",
+      "name": "Balachandran S",
+      "dept": "ECE",
+      "sec": "A",
+      "year": "3rd"
+    },
+    {
+      "regNo": "sec23cs001",
+      "rollNo": "2303412510622001",
+      "name": "Harish Kumar V",
+      "dept": "CSE",
+      "sec": "B",
+      "year": "3rd"
+    },
+    {
+      "regNo": "sec23it015",
+      "rollNo": "2303412510623015",
+      "name": "Keerthana M",
+      "dept": "IT",
+      "sec": "C",
+      "year": "3rd"
+    },
+    {
+      "regNo": "sec23it016",
+      "rollNo": "2303412510623016",
+      "name": "Logeshwaran E",
+      "dept": "IT",
+      "sec": "C",
+      "year": "3rd"
+    }
+  ],
+  "courses": [
+    {
+      "courseCode": "20ITPC701",
+      "courseName": "Online Attendance Marking Systems",
+      "dept": "IT"
+    },
+    {
+      "courseCode": "20ECPC602",
+      "courseName": "Embedded Geofencing Circuits",
+      "dept": "ECE"
+    },
+    {
+      "courseCode": "20CSPC501",
+      "courseName": "Dynamic QR Cryptography & Security",
+      "dept": "CSE"
+    },
+    {
+      "courseCode": "20EEPC302",
+      "courseName": "Transmission Lines & Networks",
+      "dept": "EEE"
+    }
+  ]
+}
