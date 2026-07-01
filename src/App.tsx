@@ -189,6 +189,11 @@ const APPS_SCRIPT_DOPOST = `function doPost(e) {
               st.regNo.toUpperCase().trim(),
               st.name.trim()
             ]);
+            studentRows.push({
+              rowNum: 7 + studentRows.length,
+              regNo: st.regNo.toLowerCase().replace(/[^a-zA-Z0-9]/g, ''),
+              name: st.name.trim()
+            });
             sheetChanged = true;
           }
         }

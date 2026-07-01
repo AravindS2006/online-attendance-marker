@@ -374,12 +374,30 @@ async function syncSessionToSheetsInBackground(session) {
         };
       });
     } else {
-      studentPayload = session.students.map((s, index) => ({
+      const uniqueStudents = {};
+      session.students.forEach(s => {
+        const cleanId = cleanRegNo(s.regNo);
+        if (!uniqueStudents[cleanId]) {
+          uniqueStudents[cleanId] = {
+            regNo: s.regNo,
+            name: s.name,
+            presentIn: false,
+            presentOut: false
+          };
+        }
+        if (!s.type || s.type === "IN") {
+          uniqueStudents[cleanId].presentIn = true;
+        } else if (s.type === "OUT") {
+          uniqueStudents[cleanId].presentOut = true;
+        }
+      });
+
+      studentPayload = Object.values(uniqueStudents).map((s, index) => ({
         sNo: index + 1,
         regNo: s.regNo.toUpperCase().trim(),
         name: s.name.trim(),
-        presentIn: !s.type || s.type === "IN",
-        presentOut: s.type === "OUT"
+        presentIn: s.presentIn,
+        presentOut: s.presentOut
       }));
     }
 
@@ -764,12 +782,30 @@ app.post('/api/sessions/:id/sync-sheets', async (req, res) => {
       });
     } else {
       // Fallback: if database roster is empty, send present students
-      studentPayload = session.students.map((s, index) => ({
+      const uniqueStudents = {};
+      session.students.forEach(s => {
+        const cleanId = cleanRegNo(s.regNo);
+        if (!uniqueStudents[cleanId]) {
+          uniqueStudents[cleanId] = {
+            regNo: s.regNo,
+            name: s.name,
+            presentIn: false,
+            presentOut: false
+          };
+        }
+        if (!s.type || s.type === "IN") {
+          uniqueStudents[cleanId].presentIn = true;
+        } else if (s.type === "OUT") {
+          uniqueStudents[cleanId].presentOut = true;
+        }
+      });
+
+      studentPayload = Object.values(uniqueStudents).map((s, index) => ({
         sNo: index + 1,
         regNo: s.regNo.toUpperCase().trim(),
         name: s.name.trim(),
-        presentIn: !s.type || s.type === "IN",
-        presentOut: s.type === "OUT"
+        presentIn: s.presentIn,
+        presentOut: s.presentOut
       }));
     }
 
