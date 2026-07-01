@@ -8,6 +8,10 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const cachePath = process.env.VERCEL 
+  ? '/tmp/roster_cache.json'
+  : path.join(__dirname, 'roster_cache.json');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -37,11 +41,33 @@ let CLASSROOMS_DIRECTORY = [
 let COLLEGE_STUDENTS_DIRECTORY = [];
 
 // Load Roster from Disk cache on boot if it exists (protects against node watch auto-restarts)
-const cachePath = process.env.VERCEL 
-  ? '/tmp/roster_cache.json'
-  : path.join(__dirname, 'roster_cache.json');
+let lastCacheLoadTime = 0;
+
+function reloadDirectoryCacheIfNeeded() {
+  try {
+    if (fs.existsSync(cachePath)) {
+      const stats = fs.statSync(cachePath);
+      if (stats.mtimeMs > lastCacheLoadTime) {
+        const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        if (Array.isArray(cacheData.faculty) && Array.isArray(cacheData.students)) {
+          FACULTY_DIRECTORY = cacheData.faculty;
+          COLLEGE_STUDENTS_DIRECTORY = cacheData.students;
+          if (Array.isArray(cacheData.classrooms)) {
+            CLASSROOMS_DIRECTORY = cacheData.classrooms;
+          }
+          lastCacheLoadTime = stats.mtimeMs;
+          console.log(`[DB Cache Auto-Reload] Synced directory updated from disk (${FACULTY_DIRECTORY.length} faculty, ${COLLEGE_STUDENTS_DIRECTORY.length} students).`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[DB Cache Auto-Reload Error]", err.message);
+  }
+}
+
 if (fs.existsSync(cachePath)) {
   try {
+    const stats = fs.statSync(cachePath);
     const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
     if (Array.isArray(cacheData.faculty) && cacheData.faculty.length > 0 && Array.isArray(cacheData.students) && cacheData.students.length > 0) {
       FACULTY_DIRECTORY = cacheData.faculty;
@@ -49,6 +75,7 @@ if (fs.existsSync(cachePath)) {
       if (Array.isArray(cacheData.classrooms)) {
         CLASSROOMS_DIRECTORY = cacheData.classrooms;
       }
+      lastCacheLoadTime = stats.mtimeMs;
       console.log(`[DB Cache] Restored synchronized roster from disk cache (${COLLEGE_STUDENTS_DIRECTORY.length} students, ${FACULTY_DIRECTORY.length} faculty, ${CLASSROOMS_DIRECTORY.length} classrooms).`);
     }
   } catch (err) {
@@ -62,6 +89,8 @@ const sessions = {};
 // ==========================================
 // 2. HELPER FUNCTIONS
 // ==========================================
+
+const cleanRegNo = (regNo) => regNo ? String(regNo).replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim() : '';
 
 // Haversine formula to compute distance in meters between two lat/lng coordinates
 function getHaversineDistance(lat1, lon1, lat2, lon2) {
@@ -133,14 +162,20 @@ function startSessionInterval(classCode) {
 
 // Teacher Authentication Login
 app.post('/api/faculty/login', (req, res) => {
+  reloadDirectoryCacheIfNeeded();
   const { username, password } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: "Faculty ID and Password are required" });
   }
 
+  const cleanUsername = String(username).replace(/[\r\n\t]/g, '').toLowerCase().trim();
+  const cleanPassword = String(password).replace(/[\r\n\t]/g, '').trim();
+
   const faculty = FACULTY_DIRECTORY.find(
-    f => f && f.username && String(f.username).toLowerCase().trim() === String(username).toLowerCase().trim() && String(f.password).trim() === String(password).trim()
+    f => f && f.username && 
+         String(f.username).replace(/[\r\n\t]/g, '').toLowerCase().trim() === cleanUsername && 
+         String(f.password).replace(/[\r\n\t]/g, '').trim() === cleanPassword
   );
 
   if (!faculty) {
@@ -161,15 +196,16 @@ app.post('/api/faculty/change-password', (req, res) => {
     return res.status(400).json({ error: "Username, current password, and new password are required" });
   }
 
+  reloadDirectoryCacheIfNeeded();
   const faculty = FACULTY_DIRECTORY.find(
-    f => f && f.username && String(f.username).toLowerCase().trim() === String(username).toLowerCase().trim()
+    f => f && f.username && String(f.username).replace(/[\r\n\t]/g, '').toLowerCase().trim() === String(username).replace(/[\r\n\t]/g, '').toLowerCase().trim()
   );
 
   if (!faculty) {
     return res.status(404).json({ error: "Faculty account not found" });
   }
 
-  if (String(faculty.password).trim() !== String(currentPassword).trim()) {
+  if (String(faculty.password).replace(/[\r\n\t]/g, '').trim() !== String(currentPassword).replace(/[\r\n\t]/g, '').trim()) {
     return res.status(401).json({ error: "Incorrect current password" });
   }
 
@@ -185,10 +221,9 @@ app.get('/api/students/search', (req, res) => {
   
   const query = q.toString().toLowerCase().trim();
   const results = COLLEGE_STUDENTS_DIRECTORY.filter(s => {
-    const reg = s && s.regNo ? String(s.regNo).toLowerCase().trim() : "";
-    const roll = s && s.rollNo ? String(s.rollNo).toLowerCase().trim() : "";
+    const reg = s && s.regNo ? cleanRegNo(s.regNo) : "";
     const name = s && s.name ? String(s.name).toLowerCase().trim() : "";
-    return reg.includes(query) || roll.includes(query) || name.includes(query);
+    return reg.includes(query) || name.includes(query);
   });
   
   res.json(results);
@@ -214,7 +249,8 @@ app.get('/api/sessions/lookup/:code', (req, res) => {
 
 // Create a new attendance session (Teacher)
 app.post('/api/sessions', (req, res) => {
-  const { classCode, department, section, year, teacherName, googleSheetUrl } = req.body;
+  reloadDirectoryCacheIfNeeded();
+  const { classCode, department, section, year, teacherName, sessionType, googleSheetUrl } = req.body;
 
   if (!classCode || !department || !section || !year) {
     return res.status(400).json({ error: "Missing required classroom fields" });
@@ -252,6 +288,7 @@ app.post('/api/sessions', (req, res) => {
     section,
     year,
     teacherName: teacherName || "ERP Administrator",
+    sessionType: sessionType || "IN",
     geofence,
     googleSheetUrl: googleSheetUrl || "",
     currentOtp: "",
@@ -302,12 +339,49 @@ async function syncSessionToSheetsInBackground(session) {
   if (!session.googleSheetUrl) return;
 
   try {
-    const today = new Date().toLocaleDateString('en-IN', {
-      timeZone: 'Asia/Kolkata',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
+    const dateObj = new Date();
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = months[dateObj.getMonth()];
+    const year = dateObj.getFullYear();
+    const today = `${day}-${month}-${year}`; // E.g. "01-Jul-2026"
+
+    // Filter students from the roster database that belong to this class
+    const classStudents = COLLEGE_STUDENTS_DIRECTORY.filter(s => {
+      const deptMatch = String(s.dept).toUpperCase().trim() === String(session.department).toUpperCase().trim();
+      const secMatch = String(s.sec).toUpperCase().trim() === String(session.section).toUpperCase().trim();
+      const yearMatch = String(s.year).toUpperCase().trim() === String(session.year).toUpperCase().trim();
+      return deptMatch && secMatch && yearMatch;
     });
+
+    // Sort students alphabetically by name to maintain a fixed position
+    classStudents.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    let studentPayload = [];
+    if (classStudents.length > 0) {
+      studentPayload = classStudents.map((s, index) => {
+        const checkedInList = session.students.filter(
+          st => cleanRegNo(st.regNo) === cleanRegNo(s.regNo)
+        );
+        const presentIn = checkedInList.some(st => !st.type || st.type === "IN");
+        const presentOut = checkedInList.some(st => st.type === "OUT");
+        return {
+          sNo: index + 1,
+          regNo: s.regNo.toUpperCase().trim(),
+          name: s.name.trim(),
+          presentIn: presentIn,
+          presentOut: presentOut
+        };
+      });
+    } else {
+      studentPayload = session.students.map((s, index) => ({
+        sNo: index + 1,
+        regNo: s.regNo.toUpperCase().trim(),
+        name: s.name.trim(),
+        presentIn: !s.type || s.type === "IN",
+        presentOut: s.type === "OUT"
+      }));
+    }
 
     const payload = {
       metadata: {
@@ -318,17 +392,10 @@ async function syncSessionToSheetsInBackground(session) {
         year: session.year,
         teacherName: session.teacherName || "ERP Administrator",
         date: today,
+        sessionType: session.sessionType || "IN",
         classCode: session.id
       },
-      students: session.students.map((s, index) => ({
-        sNo: index + 1,
-        regNo: s.regNo.toUpperCase(),
-        rollNo: s.rollNo,
-        name: s.name,
-        timestamp: s.timestamp,
-        method: s.method,
-        deviceStatus: s.deviceStatus
-      }))
+      students: studentPayload
     };
 
     await fetch(session.googleSheetUrl, {
@@ -362,42 +429,43 @@ app.get('/api/sessions/:id/approval-status/:regNo', (req, res) => {
   const session = sessions[req.params.id.toString().toUpperCase().trim()];
   if (!session) return res.status(404).json({ error: "Session not found" });
 
-  const regNo = req.params.regNo.toLowerCase().trim();
+  const regNo = cleanRegNo(req.params.regNo);
   
   // Check if student has been marked present
-  const isMarked = session.students.some(s => s.regNo.toLowerCase() === regNo);
+  const isMarked = session.students.some(s => cleanRegNo(s.regNo) === regNo);
   if (isMarked) {
     return res.json({ approved: true, pending: false });
   }
 
   // Check if student is still in pending queue
-  const isPending = session.sharingRequests.some(r => r.regNo.toLowerCase() === regNo);
+  const isPending = session.sharingRequests.some(r => cleanRegNo(r.regNo) === regNo);
   return res.json({ approved: false, pending: isPending });
 });
 
 // Mark student attendance (Student)
-app.post('/api/sessions/:id/attend', async (req, res) => {
-  const session = sessions[req.params.id.toString().toUpperCase().trim()];
+app.post('/api/sessions/:id/attend', (req, res) => {
+  reloadDirectoryCacheIfNeeded();
+  const session = sessions[req.params.id];
   if (!session) return res.status(404).json({ error: "Session not found" });
 
-  const { regNo, otp, token, fingerprint } = req.body;
+  const { regNo, name, fingerprint, otp, token } = req.body;
   if (!regNo || !fingerprint) {
     return res.status(400).json({ error: "Student ID and Fingerprint are required" });
   }
 
-  const regNoLower = regNo.toString().toLowerCase().trim();
+  const regNoLower = cleanRegNo(regNo);
 
-  // 1. Check if student is already marked present
+  // 1. Check if student is already marked present for the active session type
   const alreadyMarked = session.students.find(
-    s => (s.regNo || "").toString().toLowerCase().trim() === regNoLower
+    s => cleanRegNo(s.regNo) === regNoLower && s.type === (session.sessionType || "IN")
   );
   if (alreadyMarked) {
-    return res.status(400).json({ error: "Student is already marked present" });
+    return res.status(400).json({ error: `Student is already marked present for the ${session.sessionType || "IN"} session` });
   }
 
   // 2. Validate student is in official College directory
   const studentInfo = COLLEGE_STUDENTS_DIRECTORY.find(
-    s => (s.regNo || "").toString().toLowerCase().trim() === regNoLower
+    s => cleanRegNo(s.regNo) === regNoLower
   );
 
   if (!studentInfo) {
@@ -446,23 +514,26 @@ app.post('/api/sessions/:id/attend', async (req, res) => {
   const studentsOnThisDevice = session.deviceFingerprints[fingerprint];
 
   // If this device has already been used to mark another student's attendance in this session:
-  if (studentsOnThisDevice.length > 0 && !studentsOnThisDevice.includes(studentInfo.regNo)) {
-    // Check if there is already an approved exception for this student
+  if (studentsOnThisDevice.length > 0 && !studentsOnThisDevice.map(cleanRegNo).includes(cleanRegNo(studentInfo.regNo))) {
+    // Check if there is already an approved exception for this student for the active session type
     const isApprovedException = session.students.find(
-      s => s.regNo.toLowerCase() === studentInfo.regNo.toLowerCase() && s.deviceStatus === "Shared (Approved)"
+      s => cleanRegNo(s.regNo) === cleanRegNo(studentInfo.regNo) && 
+           s.deviceStatus === "Shared (Approved)" && 
+           s.type === (session.sessionType || "IN")
     );
 
     if (!isApprovedException) {
-      // Check if this student is already in the pending approval queue
+      // Check if this student is already in the pending approval queue for the active session type
       const alreadyPending = session.sharingRequests.find(
-        r => r.regNo.toLowerCase() === studentInfo.regNo.toLowerCase()
+        r => cleanRegNo(r.regNo) === cleanRegNo(studentInfo.regNo) && r.type === (session.sessionType || "IN")
       );
 
       if (!alreadyPending) {
         session.sharingRequests.push({
           regNo: studentInfo.regNo,
-          rollNo: studentInfo.rollNo,
+          rollNo: "",
           name: studentInfo.name,
+          type: session.sessionType || "IN",
           fingerprint,
           originalRegNo: studentsOnThisDevice[0], // Who marked first on this phone
           timestamp: new Date().toLocaleTimeString()
@@ -477,25 +548,22 @@ app.post('/api/sessions/:id/attend', async (req, res) => {
   }
 
   // 6. Perfect validation - Mark attendance
-  const normalizedReg = studentInfo.regNo.toString().toLowerCase().trim();
-  if (!studentsOnThisDevice.map(id => id.toString().toLowerCase().trim()).includes(normalizedReg)) {
+  const normalizedReg = cleanRegNo(studentInfo.regNo);
+  if (!studentsOnThisDevice.map(cleanRegNo).includes(normalizedReg)) {
     studentsOnThisDevice.push(normalizedReg);
   }
   session.deviceFingerprints[fingerprint] = studentsOnThisDevice;
 
   const markedStudent = {
     regNo: studentInfo.regNo,
-    rollNo: studentInfo.rollNo,
     name: studentInfo.name,
+    type: session.sessionType || "IN",
     timestamp: new Date().toLocaleTimeString(),
     deviceStatus: studentsOnThisDevice.length > 1 ? "Shared (Direct)" : "Single Device",
     method: otp ? "OTP Code" : "QR Scan"
   };
 
   session.students.push(markedStudent);
-
-  // Trigger background auto-sync to Sheets
-  syncSessionToSheetsInBackground(session);
 
   res.json({
     status: "success",
@@ -516,7 +584,7 @@ app.post('/api/sessions/:id/approve-sharing', (req, res) => {
 
   // Find index in pending queue
   const requestIndex = session.sharingRequests.findIndex(
-    r => r.regNo.toLowerCase() === regNo.toLowerCase()
+    r => cleanRegNo(r.regNo) === cleanRegNo(regNo)
   );
 
   if (requestIndex === -1) {
@@ -536,17 +604,14 @@ app.post('/api/sessions/:id/approve-sharing', (req, res) => {
   // Mark present
   const markedStudent = {
     regNo: request.regNo,
-    rollNo: request.rollNo,
     name: request.name,
+    type: session.sessionType || "IN",
     timestamp: new Date().toLocaleTimeString(),
     deviceStatus: "Shared (Approved)",
     method: "Teacher Approved"
   };
 
   session.students.push(markedStudent);
-
-  // Trigger background auto-sync to Sheets
-  syncSessionToSheetsInBackground(session);
 
   res.json({ status: "success", message: `Approved device sharing for ${request.name}`, student: markedStudent });
 });
@@ -562,7 +627,7 @@ app.post('/api/sessions/:id/reject-sharing', (req, res) => {
   if (!regNo) return res.status(400).json({ error: "Missing Register Number" });
 
   const requestIndex = session.sharingRequests.findIndex(
-    r => r.regNo.toLowerCase() === regNo.toLowerCase()
+    r => cleanRegNo(r.regNo) === cleanRegNo(regNo)
   );
 
   if (requestIndex === -1) {
@@ -585,32 +650,30 @@ app.post('/api/sessions/:id/manual-mark', (req, res) => {
 
   // Check if student is in college directory
   const directoryMatch = COLLEGE_STUDENTS_DIRECTORY.find(
-    s => (s.regNo || "").toString().toLowerCase().trim() === regNo.toString().toLowerCase().trim()
+    s => cleanRegNo(s.regNo) === cleanRegNo(regNo)
   );
 
-  // If already marked, fail
+  // If already marked for the active session type, fail
   const alreadyMarked = session.students.find(
-    s => (s.regNo || "").toString().toLowerCase().trim() === regNo.toString().toLowerCase().trim()
+    s => cleanRegNo(s.regNo) === cleanRegNo(regNo) && s.type === (session.sessionType || "IN")
   );
   if (alreadyMarked) {
-    return res.status(400).json({ error: "Student already marked present" });
+    return res.status(400).json({ error: `Student already marked present for the ${session.sessionType || "IN"} session` });
   }
 
-  const studentData = {
-    regNo: directoryMatch ? directoryMatch.regNo : regNo,
-    rollNo: directoryMatch ? directoryMatch.rollNo : "N/A",
-    name: directoryMatch ? directoryMatch.name : regNo.toUpperCase(),
+  const regNoNormalized = regNo.toUpperCase().trim();
+  const markedStudent = {
+    regNo: regNoNormalized,
+    name: directoryMatch ? directoryMatch.name : "Unknown Student",
+    type: session.sessionType || "IN",
     timestamp: new Date().toLocaleTimeString(),
-    deviceStatus: "Manual (No Device)",
+    deviceStatus: "Manually Added",
     method: "Teacher Manual"
   };
 
-  session.students.push(studentData);
+  session.students.push(markedStudent);
 
-  // Trigger background auto-sync to Sheets
-  syncSessionToSheetsInBackground(session);
-
-  res.json({ status: "success", message: `Successfully marked ${studentData.name} present manually`, student: studentData });
+  res.json({ status: "success", message: `Successfully marked ${markedStudent.name} present manually`, student: markedStudent });
 });
 
 // Teacher edits a student's check-in details (e.g. if mistake made)
@@ -620,35 +683,29 @@ app.post('/api/sessions/:id/edit-student', (req, res) => {
 
   if (!verifySessionOwnership(req, res, session)) return;
 
-  const { oldRegNo, regNo, rollNo, name } = req.body;
-  if (!oldRegNo || !regNo || !rollNo || !name) {
-    return res.status(400).json({ error: "Missing required student details" });
+  const { oldRegNo, regNo, name } = req.body;
+  if (!oldRegNo || !regNo || !name) {
+    return res.status(400).json({ error: "Missing required student parameters" });
   }
 
   const student = session.students.find(
-    s => s.regNo.toLowerCase() === oldRegNo.toLowerCase().trim()
+    s => cleanRegNo(s.regNo) === cleanRegNo(oldRegNo)
   );
 
   if (!student) {
-    return res.status(404).json({ error: "Student record not found in this session" });
+    return res.status(404).json({ error: "Student not found in active session attendance" });
   }
 
-  // Update details
-  student.regNo = regNo.toLowerCase().trim();
-  student.rollNo = rollNo.trim();
+  student.regNo = regNo.toUpperCase().trim();
   student.name = name.trim();
 
-  // If the student also exists in device fingerprints, update it there
   for (const fp in session.deviceFingerprints) {
     const list = session.deviceFingerprints[fp];
-    const index = list.indexOf(oldRegNo.toLowerCase().trim());
+    const index = list.map(cleanRegNo).indexOf(cleanRegNo(oldRegNo));
     if (index !== -1) {
-      list[index] = regNo.toLowerCase().trim();
+      list[index] = cleanRegNo(regNo);
     }
   }
-
-  // Trigger background auto-sync to Sheets
-  syncSessionToSheetsInBackground(session);
 
   res.json({ 
     status: "success", 
@@ -670,13 +727,51 @@ app.post('/api/sessions/:id/sync-sheets', async (req, res) => {
   }
 
   try {
-    // Send attendance data formatted into a clean structured report payload
-    const today = new Date().toLocaleDateString('en-IN', {
-      timeZone: 'Asia/Kolkata',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
+    // Send attendance data formatted into a clean structured report payload (strictly DD-MMM-YYYY text)
+    const dateObj = new Date();
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = months[dateObj.getMonth()];
+    const year = dateObj.getFullYear();
+    const today = `${day}-${month}-${year}`; // E.g. "01-Jul-2026"
+
+    // Filter students from the roster database that belong to this class
+    const classStudents = COLLEGE_STUDENTS_DIRECTORY.filter(s => {
+      const deptMatch = String(s.dept).toUpperCase().trim() === String(session.department).toUpperCase().trim();
+      const secMatch = String(s.sec).toUpperCase().trim() === String(session.section).toUpperCase().trim();
+      const yearMatch = String(s.year).toUpperCase().trim() === String(session.year).toUpperCase().trim();
+      return deptMatch && secMatch && yearMatch;
     });
+
+    // Sort students alphabetically by name to maintain a fixed position
+    classStudents.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    let studentPayload = [];
+    if (classStudents.length > 0) {
+      studentPayload = classStudents.map((s, index) => {
+        const checkedInList = session.students.filter(
+          st => cleanRegNo(st.regNo) === cleanRegNo(s.regNo)
+        );
+        const presentIn = checkedInList.some(st => !st.type || st.type === "IN");
+        const presentOut = checkedInList.some(st => st.type === "OUT");
+        return {
+          sNo: index + 1,
+          regNo: s.regNo.toUpperCase().trim(),
+          name: s.name.trim(),
+          presentIn: presentIn,
+          presentOut: presentOut
+        };
+      });
+    } else {
+      // Fallback: if database roster is empty, send present students
+      studentPayload = session.students.map((s, index) => ({
+        sNo: index + 1,
+        regNo: s.regNo.toUpperCase().trim(),
+        name: s.name.trim(),
+        presentIn: !s.type || s.type === "IN",
+        presentOut: s.type === "OUT"
+      }));
+    }
 
     const payload = {
       metadata: {
@@ -687,17 +782,10 @@ app.post('/api/sessions/:id/sync-sheets', async (req, res) => {
         year: session.year,
         teacherName: session.teacherName || "ERP Administrator",
         date: today,
+        sessionType: session.sessionType || "IN",
         classCode: session.id
       },
-      students: session.students.map((s, index) => ({
-        sNo: index + 1,
-        regNo: s.regNo.toUpperCase(),
-        rollNo: s.rollNo,
-        name: s.name,
-        timestamp: s.timestamp,
-        method: s.method,
-        deviceStatus: s.deviceStatus
-      }))
+      students: studentPayload
     };
 
     const controller = new AbortController();
@@ -729,6 +817,26 @@ app.post('/api/sessions/:id/sync-sheets', async (req, res) => {
   }
 });
 
+// Toggle Session Type (Teacher active dashboard - IN vs OUT)
+app.put('/api/sessions/:id/session-type', (req, res) => {
+  const session = sessions[req.params.id];
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  if (!verifySessionOwnership(req, res, session)) return;
+
+  const { sessionType } = req.body;
+  if (sessionType !== 'IN' && sessionType !== 'OUT') {
+    return res.status(400).json({ error: "Invalid session type. Must be 'IN' or 'OUT'" });
+  }
+
+  session.sessionType = sessionType;
+  
+  // Rotate token immediately to reset OTP and refresh scanner parameters
+  rotateSessionOtp(session.id);
+  
+  res.json({ success: true, sessionType: session.sessionType });
+});
+
 // Delete session / Clear
 app.delete('/api/sessions/:id', (req, res) => {
   const session = sessions[req.params.id];
@@ -743,8 +851,48 @@ app.delete('/api/sessions/:id', (req, res) => {
   res.json({ status: "success", message: "Session closed successfully" });
 });
 
+// Check status of in-memory roster database (Self-Healing helper)
+app.get('/api/database/status', (req, res) => {
+  reloadDirectoryCacheIfNeeded();
+  res.json({
+    empty: COLLEGE_STUDENTS_DIRECTORY.length === 0,
+    facultyCount: FACULTY_DIRECTORY.length,
+    studentCount: COLLEGE_STUDENTS_DIRECTORY.length,
+    classroomCount: CLASSROOMS_DIRECTORY.length
+  });
+});
+
+// Restore roster database (Self-Healing recovery protocol)
+app.post('/api/database/restore', (req, res) => {
+  const { faculty, students, classrooms } = req.body;
+  
+  if (Array.isArray(faculty) && Array.isArray(students)) {
+    FACULTY_DIRECTORY = faculty;
+    COLLEGE_STUDENTS_DIRECTORY = students;
+    if (Array.isArray(classrooms)) {
+      CLASSROOMS_DIRECTORY = classrooms;
+    }
+    
+    // Write back to local cache file
+    try {
+      fs.writeFileSync(
+        cachePath,
+        JSON.stringify({ faculty: FACULTY_DIRECTORY, students: COLLEGE_STUDENTS_DIRECTORY, classrooms: CLASSROOMS_DIRECTORY }, null, 2)
+      );
+      console.log("[Self-Healing] Restored roster databases synced to local cache file.");
+    } catch (err) {
+      console.error("Self-healing cache write failed:", err.message);
+    }
+    
+    return res.json({ success: true, message: "Database restored successfully!" });
+  }
+  
+  res.status(400).json({ error: "Invalid database recovery payload format" });
+});
+
 // Retrieve Classrooms database details (Used in Teacher setup dropdowns)
 app.get('/api/database/classrooms', (req, res) => {
+  reloadDirectoryCacheIfNeeded();
   res.json(CLASSROOMS_DIRECTORY);
 });
 
@@ -825,7 +973,10 @@ app.post('/api/database/sync-roster', async (req, res) => {
         message: "Successfully synchronized college database!",
         facultyCount: FACULTY_DIRECTORY.length,
         studentCount: COLLEGE_STUDENTS_DIRECTORY.length,
-        classroomCount: CLASSROOMS_DIRECTORY.length
+        classroomCount: CLASSROOMS_DIRECTORY.length,
+        faculty: FACULTY_DIRECTORY,
+        students: COLLEGE_STUDENTS_DIRECTORY,
+        classrooms: CLASSROOMS_DIRECTORY
       });
     } else {
       res.status(400).json({ 

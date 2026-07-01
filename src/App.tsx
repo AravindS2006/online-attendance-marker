@@ -9,11 +9,356 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { verifyGeofence, SAIRAM_CAMPUS_COORDS } from './utils/geo';
 import { getDeviceFingerprint, getDeviceDescription } from './utils/fingerprint';
 
-// Interface definitions
+const APPS_SCRIPT_DOGET = `function doGet(e) {
+  // Security Access Authorization Check (Prevents public data exposure)
+  var SYNC_KEY = "sairamsynckey2026"; // Feel free to customize this key!
+  var requestKey = e && e.parameter && e.parameter.key ? e.parameter.key.toString().trim() : "";
+  if (requestKey !== SYNC_KEY) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Unauthorized access. Invalid sync key." }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    var facultySheet = ss.getSheetByName("Faculty");
+    var facultyData = [];
+    if (facultySheet) {
+      var facultyRows = facultySheet.getDataRange().getValues();
+      var headers = facultyRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
+      
+      for (var i = 1; i < facultyRows.length; i++) {
+        var row = facultyRows[i];
+        var item = {};
+        for (var j = 0; j < headers.length; j++) {
+          var key = headers[j];
+          if (key === "username" || key === "faculty id") item.username = row[j].toString().toLowerCase().trim();
+          else if (key === "password") item.password = row[j].toString().trim();
+          else if (key === "name" || key === "faculty name") item.name = row[j].toString().trim();
+          else if (key === "department" || key === "dept") item.dept = row[j].toString().trim();
+        }
+        if (item.username && item.password) facultyData.push(item);
+      }
+    }
+    
+    var studentSheet = ss.getSheetByName("Students");
+    var studentData = [];
+    if (studentSheet) {
+      var studentRows = studentSheet.getDataRange().getValues();
+      var headers = studentRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
+      
+      for (var i = 1; i < studentRows.length; i++) {
+        var row = studentRows[i];
+        var item = {};
+        for (var j = 0; j < headers.length; j++) {
+          var key = headers[j];
+          if (key === "student id" || key === "id") {
+            item.regNo = row[j].toString().replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim();
+          } else if (key === "student name" || key === "name") {
+            item.name = row[j].toString().trim();
+          } else if (key === "department" || key === "dept") {
+            item.dept = row[j].toString().trim();
+          } else if (key === "section" || key === "sec") {
+            item.sec = row[j].toString().trim();
+          } else if (key === "year") {
+            item.year = row[j].toString().trim();
+          }
+        }
+        if (item.regNo) studentData.push(item);
+      }
+    }
+
+    var classroomsSheet = ss.getSheetByName("Classrooms");
+    var classroomsData = [];
+    if (classroomsSheet) {
+      var classroomsRows = classroomsSheet.getDataRange().getValues();
+      var headers = classroomsRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
+      
+      for (var i = 1; i < classroomsRows.length; i++) {
+        var row = classroomsRows[i];
+        var item = {};
+        for (var j = 0; j < headers.length; j++) {
+          var key = headers[j];
+          if (key === "class code" || key === "classroom code" || key === "code") {
+            item.classCode = row[j].toString().toUpperCase().trim();
+          } else if (key === "latitude" || key === "lat") {
+            item.latitude = row[j].toString().trim();
+          } else if (key === "longitude" || key === "lng") {
+            item.longitude = row[j].toString().trim();
+          } else if (key === "radius") {
+            item.radius = row[j].toString().trim();
+          }
+        }
+        if (item.classCode && item.latitude && item.longitude) classroomsData.push(item);
+      }
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, classrooms: classroomsData }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+`;
+
+const APPS_SCRIPT_DOPOST = `function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var data = JSON.parse(e.postData.contents);
+    
+    var isStructured = data && data.metadata && data.students;
+    
+    if (isStructured) {
+      // 1. Initialize Sheet headers if it's a fresh/empty sheet
+      if (sheet.getLastRow() < 6) {
+        sheet.clear();
+        
+        // Title Block
+        sheet.getRange("A1").setValue(data.metadata.title);
+        sheet.getRange("A1").setFontWeight("bold").setFontSize(14);
+        sheet.getRange("A1:G1").merge().setHorizontalAlignment("center");
+        
+        // Metadata grid settings
+        sheet.getRange("A2").setValue("Classroom Code:").setFontWeight("bold");
+        sheet.getRange("B2").setValue(data.metadata.classroomCode);
+        sheet.getRange("C2").setValue("Dept: " + data.metadata.department).setFontWeight("bold");
+        
+        sheet.getRange("A3").setValue("Year:").setFontWeight("bold");
+        sheet.getRange("B3").setValue(data.metadata.year);
+        sheet.getRange("C3").setValue("Section: " + data.metadata.section).setFontWeight("bold");
+
+        sheet.getRange("A4").setValue("Faculty In-Charge:").setFontWeight("bold");
+        sheet.getRange("B4").setValue(data.metadata.teacherName);
+        
+        // Roster Student Details Columns (No Roll Number column!)
+        sheet.getRange("A6").setValue("S.No").setFontWeight("bold").setHorizontalAlignment("center").setBackground("#0f4c81").setFontColor("#ffffff");
+        sheet.getRange("B6").setValue("Student ID").setFontWeight("bold").setHorizontalAlignment("center").setBackground("#0f4c81").setFontColor("#ffffff");
+        sheet.getRange("C6").setValue("Student Name").setFontWeight("bold").setHorizontalAlignment("center").setBackground("#0f4c81").setFontColor("#ffffff");
+        
+        sheet.setColumnWidth(1, 45);  // S.No
+        sheet.setColumnWidth(2, 120); // Student ID
+        sheet.setColumnWidth(3, 160); // Student Name
+      }
+      
+      // 2. Sync Roster Student listings (Add any missing students, sort alphabetically)
+      var lastRow = sheet.getLastRow();
+      var studentRows = [];
+      if (lastRow >= 7) {
+        var range = sheet.getRange(7, 2, lastRow - 6, 2); // Column B & C
+        var vals = range.getValues();
+        for (var k = 0; k < vals.length; k++) {
+          studentRows.push({
+            rowNum: 7 + k,
+            regNo: vals[k][0].toString().replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim(),
+            name: vals[k][1].toString().trim()
+          });
+        }
+      }
+
+      if (studentRows.length === 0) {
+        // First population: write the entire class roster from incoming data
+        for (var i = 0; i < data.students.length; i++) {
+          var st = data.students[i];
+          sheet.appendRow([
+            i + 1,
+            st.regNo.toUpperCase().trim(),
+            st.name.trim()
+          ]);
+        }
+        
+        // Reload list mapping
+        lastRow = sheet.getLastRow();
+        var range = sheet.getRange(7, 2, lastRow - 6, 2);
+        var vals = range.getValues();
+        for (var k = 0; k < vals.length; k++) {
+          studentRows.push({
+            rowNum: 7 + k,
+            regNo: vals[k][0].toString().replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim(),
+            name: vals[k][1].toString().trim()
+          });
+        }
+        // Look for any newly synced/missing student registry row
+        var sheetChanged = false;
+        for (var i = 0; i < data.students.length; i++) {
+          var st = data.students[i];
+          var exists = studentRows.some(function(r) { return r.regNo.toLowerCase().replace(/[^a-zA-Z0-9]/g, '') === st.regNo.toLowerCase().replace(/[^a-zA-Z0-9]/g, ''); });
+          if (!exists) {
+            sheet.appendRow([
+              studentRows.length + 1,
+              st.regNo.toUpperCase().trim(),
+              st.name.trim()
+            ]);
+            sheetChanged = true;
+          }
+        }
+        
+        if (sheetChanged) {
+          lastRow = sheet.getLastRow();
+          
+          // Sort entire table rows starting from row 7 alphabetically by Name (Column C)
+          var sortRange = sheet.getRange(7, 1, lastRow - 6, sheet.getLastColumn());
+          sortRange.sort({ column: 3, ascending: true });
+          
+          // Re-write the S.No index numbers consecutively
+          var sNoRange = sheet.getRange(7, 1, lastRow - 6, 1);
+          var sNoVals = [];
+          for (var n = 1; n <= (lastRow - 6); n++) {
+            sNoVals.push([n]);
+          }
+          sNoRange.setValues(sNoVals);
+          
+          // Refresh list mapping
+          studentRows = [];
+          var range = sheet.getRange(7, 2, lastRow - 6, 2);
+          var vals = range.getValues();
+          for (var k = 0; k < vals.length; k++) {
+            studentRows.push({
+              rowNum: 7 + k,
+              regNo: vals[k][0].toString().replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim(),
+              name: vals[k][1].toString().trim()
+            });
+          }
+        }
+      }
+      
+      // 3. Find or Create date columns
+      var dateStr = data.metadata.date;
+      var lastCol = sheet.getLastColumn();
+      var dateColIndex = -1;
+      
+      if (lastCol >= 4) {
+        var dateRowValues = sheet.getRange(5, 4, 1, Math.max(1, lastCol - 3)).getValues()[0];
+        for (var c = 0; c < dateRowValues.length; c += 2) {
+          var cellVal = dateRowValues[c];
+          var cellStr = "";
+          if (cellVal instanceof Date) {
+            cellStr = Utilities.formatDate(cellVal, SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || "GMT+5:30", "dd-MMM-yyyy");
+          } else {
+            cellStr = cellVal ? cellVal.toString().trim() : "";
+          }
+          if (cellStr.toLowerCase() === dateStr.toLowerCase().trim()) {
+            dateColIndex = 4 + c;
+            break;
+          }
+        }
+      }
+      
+      if (dateColIndex === -1) {
+        // Date not found, create new merged headers (E.g. Column D & E for today's entry)
+        dateColIndex = Math.max(4, lastCol + 1);
+        sheet.getRange(5, dateColIndex, 1, 2).merge()
+          .setValue("'" + dateStr) // Prefix with single quote to force string type
+          .setFontWeight("bold")
+          .setHorizontalAlignment("center")
+          .setBackground("#e2e8f0")
+          .setBorder(true, true, true, true, true, true);
+          
+        sheet.getRange(6, dateColIndex).setValue("IN").setFontWeight("bold").setHorizontalAlignment("center").setBorder(true, true, true, true, true, true);
+        sheet.getRange(6, dateColIndex + 1).setValue("OUT").setFontWeight("bold").setHorizontalAlignment("center").setBorder(true, true, true, true, true, true);
+        
+        sheet.setColumnWidth(dateColIndex, 60);
+        sheet.setColumnWidth(dateColIndex + 1, 60);
+      }
+      
+      // 4. Mark present (P in Green) or absent (A in Red) for each row based on IN/OUT type
+      var isOutPhase = (data.metadata.sessionType === "OUT");
+      var inCol = dateColIndex;
+      var outCol = dateColIndex + 1;
+      
+      for (var r = 0; r < studentRows.length; r++) {
+        var student = studentRows[r];
+        var studentPayloadItem = data.students.find(function(s) {
+          return s.regNo.toLowerCase() === student.regNo;
+        });
+        
+        // --- 4a. Mark IN (Entry) Attendance ---
+        var inCell = sheet.getRange(student.rowNum, inCol);
+        if (studentPayloadItem && studentPayloadItem.presentIn) {
+          inCell.setValue("P")
+            .setFontColor("#15803d")   // Green text
+            .setBackground("#f0fdf4")  // Green background
+            .setFontWeight("bold")
+            .setHorizontalAlignment("center")
+            .setBorder(true, true, true, true, true, true);
+        } else {
+          var currentInVal = inCell.getValue().toString().trim();
+          if (currentInVal === "" || currentInVal === "A" || isOutPhase) {
+            inCell.setValue("A")
+              .setFontColor("#b91c1c")   // Red text
+              .setBackground("#fef2f2")  // Red background
+              .setFontWeight("bold")
+              .setHorizontalAlignment("center")
+              .setBorder(true, true, true, true, true, true);
+          }
+        }
+        // --- 4b. Mark OUT (Exit) Attendance ---
+        var outCell = sheet.getRange(student.rowNum, outCol);
+        if (isOutPhase) {
+          if (studentPayloadItem && studentPayloadItem.presentOut) {
+            outCell.setValue("P")
+              .setFontColor("#15803d")   // Green text
+              .setBackground("#f0fdf4")  // Green background
+              .setFontWeight("bold")
+              .setHorizontalAlignment("center")
+              .setBorder(true, true, true, true, true, true);
+          } else {
+            var inVal = inCell.getValue().toString().trim();
+            if (inVal === "A" || inVal === "") {
+              var currentOutVal = outCell.getValue().toString().trim();
+              if (currentOutVal === "" || currentOutVal === "A") {
+                outCell.setValue("A")
+                  .setFontColor("#b91c1c")   // Red text
+                  .setBackground("#fef2f2")  // Red background
+                  .setFontWeight("bold")
+                  .setHorizontalAlignment("center")
+                  .setBorder(true, true, true, true, true, true);
+              }
+            } else {
+              // If present for IN but has not marked OUT, clear it so it stays blank!
+              outCell.setValue("")
+                .setBackground(null)
+                .setFontColor(null)
+                .setFontWeight("normal")
+                .setBorder(true, true, true, true, true, true);
+            }
+          }
+        }
+      }
+      
+      // 5. Merge the top title cell dynamically across all columns to prevent single-cell truncation
+      var finalColCount = sheet.getLastColumn();
+      var titleRange = sheet.getRange(1, 1, 1, Math.max(7, finalColCount));
+      titleRange.breakApart();
+      titleRange.merge().setHorizontalAlignment("center");
+    } else {
+      // Fallback for raw flat sheet logs
+      var headers = ["Student ID", "Student Name", "Timestamp", "Method", "Device Status"];
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(headers);
+      }
+      var studentsList = Array.isArray(data) ? data : [];
+      for (var i = 0; i < studentsList.length; i++) {
+        var student = studentsList[i];
+        sheet.appendRow([
+          student.regNo.toUpperCase(),
+          student.name,
+          student.timestamp,
+          student.method,
+          student.deviceStatus
+        ]);
+      }
+    }
+  } catch (error) {
+    // Silent fail
+}
+`;
+
 interface StudentAttendance {
   regNo: string;
-  rollNo: string;
+  rollNo?: string;
   name: string;
+  type?: 'IN' | 'OUT';
   timestamp: string;
   deviceStatus: string;
   method: string;
@@ -21,8 +366,9 @@ interface StudentAttendance {
 
 interface SharingRequest {
   regNo: string;
-  rollNo: string;
+  rollNo?: string;
   name: string;
+  type?: 'IN' | 'OUT';
   fingerprint: string;
   originalRegNo: string;
   timestamp: string;
@@ -45,6 +391,7 @@ interface ActiveSession {
   currentToken: string;
   students: StudentAttendance[];
   sharingRequests: SharingRequest[];
+  sessionType: 'IN' | 'OUT';
 }
 
 interface ClassLookupInfo {
@@ -63,9 +410,9 @@ export default function App() {
   const [department, setDepartment] = useState('IT');
   const [section, setSection] = useState('A');
   const [year, setYear] = useState('3rd');
-  const [geofenceLat, setGeofenceLat] = useState(SAIRAM_CAMPUS_COORDS.latitude);
-  const [geofenceLng, setGeofenceLng] = useState(SAIRAM_CAMPUS_COORDS.longitude);
-  const [geofenceRadius, setGeofenceRadius] = useState(30); // Default 30m classroom bounds
+  const [geofenceLat, setGeofenceLat] = useState<string>(SAIRAM_CAMPUS_COORDS.latitude.toString());
+  const [geofenceLng, setGeofenceLng] = useState<string>(SAIRAM_CAMPUS_COORDS.longitude.toString());
+  const [geofenceRadius, setGeofenceRadius] = useState<string>("30"); // Default 30m classroom bounds
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [teacherCustomIp, setTeacherCustomIp] = useState('');
@@ -131,7 +478,6 @@ export default function App() {
   const [studentOtp, setStudentOtp] = useState('');
   const [scannedToken, setScannedToken] = useState('');
   const [studentName, setStudentName] = useState('');
-  const [studentRoll, setStudentRoll] = useState('');
   const [studentMatchingMsg, setStudentMatchingMsg] = useState('');
   const [geoStatus, setGeoStatus] = useState<'idle' | 'checking' | 'success' | 'out_of_bounds' | 'denied'>('idle');
   const [studentDistance, setStudentDistance] = useState<number | null>(null);
@@ -152,6 +498,7 @@ export default function App() {
   // Dynamic Classrooms states
   const [classroomsList, setClassroomsList] = useState<{ classCode: string; latitude: string; longitude: string; radius: string }[]>([]);
   const [selectedClassroomIndex, setSelectedClassroomIndex] = useState<string>('');
+  const [sessionType, setSessionType] = useState<'IN' | 'OUT'>('IN');
 
   // Password Change states
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -165,7 +512,6 @@ export default function App() {
   const [showEditStudentModal, setShowEditStudentModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<StudentAttendance | null>(null);
   const [editStudentName, setEditStudentName] = useState('');
-  const [editStudentRoll, setEditStudentRoll] = useState('');
   const [editStudentReg, setEditStudentReg] = useState('');
 
   // Admin Setup lock states
@@ -213,6 +559,13 @@ export default function App() {
       setTeacherCustomIp(currentHost);
     }
   }, []);
+
+  // Automatically recalculate location bounds when class geofence loads
+  useEffect(() => {
+    if (view === 'student' && classGeofence) {
+      requestStudentLocation();
+    }
+  }, [classGeofence, view]);
 
   // Sync active classrooms list when setup screen is loaded
   useEffect(() => {
@@ -316,7 +669,7 @@ export default function App() {
     setOtpProgress(100);
   }, [activeSession?.currentOtp]);
 
-  // Lookup student dynamically from register number input (Offline-first caching)
+  // Lookup student dynamically from Student ID input (Offline-first caching)
   useEffect(() => {
     if (studentRegNo.length >= 5) {
       // Check local offline cache first for instant loading
@@ -326,7 +679,6 @@ export default function App() {
           const profile = JSON.parse(cached);
           if (profile.regNo.toLowerCase().trim() === studentRegNo.toLowerCase().trim()) {
             setStudentName(profile.name);
-            setStudentRoll(profile.rollNo);
             setStudentMatchingMsg(`✅ Directory Match (Cached): ${profile.name} (${profile.dept} Sec ${profile.sec})`);
             return;
           }
@@ -342,12 +694,10 @@ export default function App() {
             if (data.length > 0) {
               const matched = data.find(s => s.regNo.toLowerCase() === studentRegNo.toLowerCase()) || data[0];
               setStudentName(matched.name);
-              setStudentRoll(matched.rollNo);
               setStudentMatchingMsg(`✅ Directory Match: ${matched.name} (${matched.dept} Sec ${matched.sec})`);
             } else {
               setStudentMatchingMsg('❌ Student ID not found in college database.');
               setStudentName('');
-              setStudentRoll('');
             }
           })
           .catch(() => {
@@ -359,7 +709,6 @@ export default function App() {
     } else {
       setStudentMatchingMsg('');
       setStudentName('');
-      setStudentRoll('');
     }
   }, [studentRegNo]);
 
@@ -385,9 +734,7 @@ export default function App() {
                 setClassGeofence(data.geofence);
               }
               // Automatically request location when class is verified
-              if (geoStatus === 'idle') {
-                requestStudentLocation();
-              }
+              requestStudentLocation();
             } else {
               setClassLookup(null);
               setClassLookupError('❌ Classroom session not active. Check room code.');
@@ -499,13 +846,53 @@ export default function App() {
     setFacultyLoginError('');
     setIsLoggingIn(true);
     try {
-      const res = await fetch('/api/faculty/login', {
+      let res = await fetch('/api/faculty/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: facultyUser, password: facultyPass })
+        body: JSON.stringify({ username: facultyUser.trim(), password: facultyPass.trim() })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Authentication failed');
+      let data = await res.json();
+      
+      if (!res.ok) {
+        // If login failed, check if the server database was wiped due to serverless cold start
+        const statusRes = await fetch('/api/database/status');
+        const statusData = await statusRes.json();
+        
+        if (statusData.empty || statusData.facultyCount <= 1) {
+          const cachedRosterStr = localStorage.getItem('sairam_roster_data');
+          if (cachedRosterStr) {
+            const cachedRoster = JSON.parse(cachedRosterStr);
+            console.log("[Login Self-Healing] Roster cache missing. Restoring database...");
+            const restoreRes = await fetch('/api/database/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                faculty: cachedRoster.faculty || [],
+                students: cachedRoster.students || [],
+                classrooms: cachedRoster.classrooms || []
+              })
+            });
+            
+            if (restoreRes.ok) {
+              console.log("[Login Self-Healing] Database restored successfully. Retrying login...");
+              res = await fetch('/api/faculty/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: facultyUser.trim(), password: facultyPass.trim() })
+              });
+              data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Authentication failed');
+            } else {
+              throw new Error(data.error || 'Authentication failed');
+            }
+          } else {
+            throw new Error(data.error || 'Authentication failed');
+          }
+        } else {
+          throw new Error(data.error || 'Authentication failed');
+        }
+      }
+      
       setActiveTeacherName(data.name);
       setDepartment(data.department === 'ALL' ? 'IT' : data.department);
       setView('teacher_setup');
@@ -526,6 +913,44 @@ export default function App() {
         navigator.geolocation.clearWatch(gpsWatchRef.current);
       }
     };
+  }, []);
+
+  // Self-Healing Roster Recovery: Automatically restore database if server memory was wiped by Vercel reboot
+  useEffect(() => {
+    const restoreDatabase = async () => {
+      try {
+        const statusRes = await fetch('/api/database/status');
+        const statusData = await statusRes.json();
+        
+        if (statusData.empty) {
+          const cachedRosterStr = localStorage.getItem('sairam_roster_data');
+          if (cachedRosterStr) {
+            const cachedRoster = JSON.parse(cachedRosterStr);
+            console.log("[Self-Healing] Roster cache missing on server. Restoring database...");
+            const restoreRes = await fetch('/api/database/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                faculty: cachedRoster.faculty || [],
+                students: cachedRoster.students || [],
+                classrooms: cachedRoster.classrooms || []
+              })
+            });
+            if (restoreRes.ok) {
+              console.log("[Self-Healing] Database restored successfully!");
+              // Refresh classrooms list locally since it was updated
+              fetch('/api/database/classrooms')
+                .then(r => r.json())
+                .then(list => { if (Array.isArray(list)) setClassroomsList(list); })
+                .catch(() => {});
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[Self-Healing] Error recovering database status:", e);
+      }
+    };
+    restoreDatabase();
   }, []);
 
   // ==========================================
@@ -550,10 +975,11 @@ export default function App() {
           section,
           year,
           teacherName: activeTeacherName,
+          sessionType,
           geofence: {
-            latitude: geofenceLat,
-            longitude: geofenceLng,
-            radius: geofenceRadius
+            latitude: parseFloat(geofenceLat) || SAIRAM_CAMPUS_COORDS.latitude,
+            longitude: parseFloat(geofenceLng) || SAIRAM_CAMPUS_COORDS.longitude,
+            radius: parseFloat(geofenceRadius) || 30
           },
           googleSheetUrl
         })
@@ -600,6 +1026,14 @@ export default function App() {
       
       if (res.ok) {
         setRosterSyncMsg(`✓ Loaded ${data.facultyCount} teachers, ${data.studentCount} students & ${data.classroomCount || 0} classrooms!`);
+        
+        // Save database cache to localStorage for automatic Self-Healing recovery
+        localStorage.setItem('sairam_roster_data', JSON.stringify({
+          faculty: data.faculty || [],
+          students: data.students || [],
+          classrooms: data.classrooms || []
+        }));
+
         // Proactively refresh classrooms list locally
         fetch('/api/database/classrooms')
           .then(r => r.json())
@@ -625,9 +1059,9 @@ export default function App() {
       const room = classroomsList[index];
       if (room) {
         setTeacherClassCode(room.classCode);
-        setGeofenceLat(parseFloat(room.latitude));
-        setGeofenceLng(parseFloat(room.longitude));
-        setGeofenceRadius(parseInt(room.radius) || 30);
+        setGeofenceLat(room.latitude.toString());
+        setGeofenceLng(room.longitude.toString());
+        setGeofenceRadius((room.radius || "30").toString());
       }
     } else {
       setTeacherClassCode('');
@@ -694,8 +1128,8 @@ export default function App() {
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setGeofenceLat(parseFloat(position.coords.latitude.toFixed(6)));
-        setGeofenceLng(parseFloat(position.coords.longitude.toFixed(6)));
+        setGeofenceLat(position.coords.latitude.toFixed(6));
+        setGeofenceLng(position.coords.longitude.toFixed(6));
       },
       (error) => {
         alert(`Failed to detect location: ${error.message}. Please verify GPS permissions.`);
@@ -708,7 +1142,6 @@ export default function App() {
   const openEditStudent = (st: StudentAttendance) => {
     setEditingStudent(st);
     setEditStudentName(st.name);
-    setEditStudentRoll(st.rollNo);
     setEditStudentReg(st.regNo);
     setShowEditStudentModal(true);
   };
@@ -727,7 +1160,6 @@ export default function App() {
         body: JSON.stringify({
           oldRegNo: editingStudent.regNo,
           regNo: editStudentReg.trim(),
-          rollNo: editStudentRoll.trim(),
           name: editStudentName.trim()
         })
       });
@@ -744,6 +1176,27 @@ export default function App() {
     }
   };
 
+  // Submit toggled session type to backend
+  const handleToggleSessionType = async (type: 'IN' | 'OUT') => {
+    if (!activeSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${activeSession.id}/session-type`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Teacher-Username': facultyUser
+        },
+        body: JSON.stringify({ sessionType: type })
+      });
+      if (res.ok) {
+        // Refresh session details to load the updated type and OTP
+        fetchSessionDetails(activeSession.id);
+      }
+    } catch (e) {
+      console.error("Failed to toggle session type:", e);
+    }
+  };
+
   // Fetch session details for dashboard update (Authenticated with creator Isolation credentials)
   const fetchSessionDetails = async (id: string) => {
     try {
@@ -756,7 +1209,6 @@ export default function App() {
       console.error("Failed to poll session details", err);
     }
   };
-
   // Student location verification request (with watchPosition settling coordinate filters)
   const requestStudentLocation = () => {
     setGeoStatus('checking');
@@ -781,13 +1233,58 @@ export default function App() {
       }
       if (timerId !== null) {
         window.clearTimeout(timerId);
+        timerId = null;
       }
     };
 
-    // Timeout of 4.5 seconds to allow mobile GPS hardware to settle
+    const startWatching = (highAccuracy: boolean) => {
+      gpsWatchRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude, accuracy } = position.coords;
+          setStudentCoords({ lat: latitude, lng: longitude });
+          bestCoords = { latitude, longitude };
+          console.log(`GPS stream reading (${highAccuracy ? 'High' : 'Low'} Accuracy): Accuracy ${accuracy}m at ${latitude}, ${longitude}`);
+
+          const targetLat = classGeofence?.latitude || SAIRAM_CAMPUS_COORDS.latitude;
+          const targetLng = classGeofence?.longitude || SAIRAM_CAMPUS_COORDS.longitude;
+          const targetRadius = classGeofence?.radius || 500;
+          
+          const check = verifyGeofence(latitude, longitude, targetLat, targetLng, targetRadius);
+          setStudentDistance(check.distance);
+
+          if (check.inGeofence) {
+            setGeoStatus('success');
+            setAttendanceError('');
+            stopWatching();
+          } else {
+            setGeoStatus('out_of_bounds');
+            setAttendanceError(`Geofence Error: You are outside classroom boundary. Distance: ${Math.round(check.distance)}m (Limit: ${targetRadius}m)`);
+          }
+        },
+        (error) => {
+          console.error(`GPS Watch stream error (HighAccuracy: ${highAccuracy})`, error);
+          if (highAccuracy) {
+            console.log("High accuracy timed out or unavailable. Switching to standard accuracy...");
+            stopWatching();
+            startWatching(false);
+          } else {
+            if (!bestCoords) {
+              setGeoStatus('denied');
+              setAttendanceError(`GPS Location Error: ${error.message}. Please check location permissions.`);
+            }
+          }
+        },
+        { enableHighAccuracy: highAccuracy, timeout: 6000, maximumAge: 0 }
+      );
+    };
+
+    // Timeout of 15 seconds to allow mobile GPS hardware to warm up and settle
     timerId = window.setTimeout(() => {
-      stopWatching();
-      if (bestCoords) {
+      if (!bestCoords) {
+        stopWatching();
+        setGeoStatus('denied');
+        setAttendanceError("GPS Location timeout. Unable to secure a clear satellite lock. Please ensure location services are enabled.");
+      } else {
         const targetLat = classGeofence?.latitude || SAIRAM_CAMPUS_COORDS.latitude;
         const targetLng = classGeofence?.longitude || SAIRAM_CAMPUS_COORDS.longitude;
         const targetRadius = classGeofence?.radius || 500;
@@ -797,49 +1294,17 @@ export default function App() {
         if (check.inGeofence) {
           setGeoStatus('success');
           setAttendanceError('');
+          stopWatching();
         } else {
           setGeoStatus('out_of_bounds');
-          setAttendanceError(`Geofence Error: You are outside campus boundary. Distance: ${Math.round(check.distance)}m (Limit: ${targetRadius}m)`);
+          setAttendanceError(`Geofence Error: You are outside classroom boundary. Distance: ${Math.round(check.distance)}m (Limit: ${targetRadius}m)`);
+          stopWatching();
         }
-      } else {
-        setGeoStatus('denied');
-        setAttendanceError("GPS Location timeout. Unable to secure a clear satellite lock.");
       }
-    }, 4500);
+    }, 15000);
 
-    gpsWatchRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        setStudentCoords({ lat: latitude, lng: longitude });
-        bestCoords = { latitude, longitude };
-        console.log(`GPS stream reading: Accuracy ${accuracy}m at ${latitude}, ${longitude}`);
-
-        const targetLat = classGeofence?.latitude || SAIRAM_CAMPUS_COORDS.latitude;
-        const targetLng = classGeofence?.longitude || SAIRAM_CAMPUS_COORDS.longitude;
-        const targetRadius = classGeofence?.radius || 500;
-        
-        const check = verifyGeofence(latitude, longitude, targetLat, targetLng, targetRadius);
-        
-        // If coordinate locks inside geofence boundaries, trigger success instantly
-        if (check.inGeofence) {
-          setStudentDistance(check.distance);
-          setGeoStatus('success');
-          setAttendanceError('');
-          stopWatching();
-        } else {
-          setStudentDistance(check.distance);
-        }
-      },
-      (error) => {
-        console.error("GPS Watch stream error", error);
-        if (!bestCoords) {
-          stopWatching();
-          setGeoStatus('denied');
-          setAttendanceError("GPS Location access denied. Sairam College geofence verification requires GPS access.");
-        }
-      },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 } // Bypasses caches to force high accuracy
-    );
+    // Start with high accuracy initially
+    startWatching(true);
   };
 
   // Student attendance submit
@@ -879,7 +1344,7 @@ export default function App() {
             body: JSON.stringify({
               regNo: studentRegNo.trim(),
               name: studentName.trim(),
-              rollNo: studentRoll.trim(),
+              rollNo: "",
               otp: studentOtp === 'QR-SCAN' ? undefined : studentOtp.trim(),
               token: scannedToken || undefined,
               location: studentCoords,
@@ -913,7 +1378,7 @@ export default function App() {
         // Cache successful profile locally for instant offline loading next time
         localStorage.setItem('sairam_student_cached_profile', JSON.stringify({
           regNo: studentRegNo.trim(),
-          rollNo: studentRoll.trim(),
+          rollNo: "",
           name: studentName.trim(),
           dept: classLookup?.department || "",
           sec: classLookup?.section || "",
@@ -939,7 +1404,7 @@ export default function App() {
         if (data.approved) {
           setMarkedStudentDetails({
             regNo: studentRegNo,
-            rollNo: studentRoll,
+            rollNo: "",
             name: studentName,
             timestamp: new Date().toLocaleTimeString(),
             deviceStatus: "Shared (Approved)",
@@ -1470,6 +1935,20 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Session Attendance Type</label>
+                    <select
+                      value={sessionType}
+                      onChange={e => setSessionType(e.target.value as 'IN' | 'OUT')}
+                      className="glass-input text-xs font-bold text-cyan-400"
+                    >
+                      <option value="IN">Entry (IN)</option>
+                      <option value="OUT">Exit (OUT)</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <div className="flex justify-between items-center border-b border-white/5 pb-1 mt-4">
                     <h4 className="text-xs font-bold text-text-primary uppercase tracking-wide">Geofence Range Settings</h4>
@@ -1485,20 +1964,18 @@ export default function App() {
                     <div>
                       <label className="block text-[10px] font-semibold text-text-secondary uppercase mb-1">Campus Latitude</label>
                       <input 
-                        type="number" 
-                        step="0.000001"
+                        type="text" 
                         value={geofenceLat} 
-                        onChange={e => setGeofenceLat(parseFloat(e.target.value))}
+                        onChange={e => setGeofenceLat(e.target.value)}
                         className="glass-input py-2 text-sm" 
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-semibold text-text-secondary uppercase mb-1">Campus Longitude</label>
                       <input 
-                        type="number" 
-                        step="0.000001"
+                        type="text" 
                         value={geofenceLng} 
-                        onChange={e => setGeofenceLng(parseFloat(e.target.value))}
+                        onChange={e => setGeofenceLng(e.target.value)}
                         className="glass-input py-2 text-sm" 
                       />
                     </div>
@@ -1507,15 +1984,15 @@ export default function App() {
                     <label className="block text-[10px] font-semibold text-text-secondary uppercase mb-1">Allowed Radius (Meters)</label>
                     <select 
                       value={geofenceRadius} 
-                      onChange={e => setGeofenceRadius(parseInt(e.target.value))} 
+                      onChange={e => setGeofenceRadius(e.target.value)} 
                       className="glass-input py-2 text-sm"
                     >
-                      <option value={15}>15m (Classroom Desk Bounds)</option>
-                      <option value={30}>30m (Room Block Bounds)</option>
-                      <option value={150}>150m (Strict Classroom Block)</option>
-                      <option value={300}>300m (Departmental Wings)</option>
-                      <option value={500}>500m (Main Sairam Campus)</option>
-                      <option value={800}>800m (Extended Campus & Grounds)</option>
+                      <option value="15">15m (Classroom Desk Bounds)</option>
+                      <option value="30">30m (Room Block Bounds)</option>
+                      <option value="150">150m (Strict Classroom Block)</option>
+                      <option value="300">300m (Departmental Wings)</option>
+                      <option value="500">500m (Main Sairam Campus)</option>
+                      <option value="800">800m (Extended Campus & Grounds)</option>
                     </select>
                   </div>
                 </div>
@@ -1589,6 +2066,30 @@ export default function App() {
                     </span>
                     <h3 className="text-2xl font-black mt-2 text-text-primary tracking-tight">Classroom: {activeSession.classroomCode}</h3>
                     <p className="text-xs text-text-secondary font-semibold">Faculty In-Charge: {activeSession.teacherName} • {activeSession.year} Year {activeSession.department} Sec {activeSession.section}</p>
+                    
+                    <div className="flex items-center gap-1.5 mt-2.5">
+                      <span className="text-[10px] font-bold text-text-secondary uppercase mr-1">Marking Mode:</span>
+                      <button
+                        onClick={() => handleToggleSessionType('IN')}
+                        className={`text-10 font-bold px-2.5 py-1 rounded-l-md border transition-all ${
+                          activeSession.sessionType === 'IN' 
+                            ? 'bg-cyan-500 text-white border-cyan-500 shadow-sm' 
+                            : 'bg-transparent text-text-secondary border-color hover:bg-slate-50'
+                        }`}
+                      >
+                        IN (Entry)
+                      </button>
+                      <button
+                        onClick={() => handleToggleSessionType('OUT')}
+                        className={`text-10 font-bold px-2.5 py-1 rounded-r-md border-y border-r transition-all ${
+                          activeSession.sessionType === 'OUT' 
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm' 
+                            : 'bg-transparent text-text-secondary border-color border-l-0 hover:bg-slate-50'
+                        }`}
+                      >
+                        OUT (Exit)
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="text-right">
@@ -1739,10 +2240,17 @@ export default function App() {
                       >
                         <div className="flex-grow">
                           <div className="text-xs font-bold text-text-primary">{st.name}</div>
-                          <div className="text-10 text-text-secondary mt-0.5">{st.regNo.toUpperCase()} • {st.rollNo}</div>
+                          <div className="text-10 text-text-secondary mt-0.5">{st.regNo.toUpperCase()}</div>
                           <div className="flex gap-2 mt-1.5">
                             <span className="text-9 bg-slate-200 text-text-secondary px-1.5 py-0.5 rounded font-mono">
                               {st.timestamp}
+                            </span>
+                            <span className={`text-9 px-1.5 py-0.5 rounded font-bold ${
+                              st.type === 'OUT' 
+                                ? 'bg-amber-100 text-amber-800 border border-amber-200' 
+                                : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
+                            }`}>
+                              {st.type || 'IN'}
                             </span>
                             <span className={`text-9 px-1.5 py-0.5 rounded ${
                               st.deviceStatus.includes('Shared') 
@@ -1799,7 +2307,7 @@ export default function App() {
                         className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-lg slide-up text-left"
                       >
                         <div className="text-xs font-bold text-text-primary">{req.name}</div>
-                        <div className="text-10 text-text-secondary mt-0.5">{req.regNo.toUpperCase()} ({req.rollNo})</div>
+                        <div className="text-10 text-text-secondary mt-0.5">{req.regNo.toUpperCase()}</div>
                         <div className="text-9 badge-purple px-2 py-1 rounded mt-2 leading-relaxed">
                           ⚠️ Device already logged attendance for: <strong className="font-bold">{req.originalRegNo.toUpperCase()}</strong>
                         </div>
@@ -2098,12 +2606,8 @@ export default function App() {
                   <span className="font-bold text-text-primary">{markedStudentDetails.name}</span>
                 </div>
                 <div className="flex justify-between border-b border-color pb-2">
-                  <span className="text-text-secondary">Register No</span>
+                  <span className="text-text-secondary">Student ID</span>
                   <span className="font-bold text-text-primary font-mono uppercase">{markedStudentDetails.regNo}</span>
-                </div>
-                <div className="flex justify-between border-b border-color pb-2">
-                  <span className="text-text-secondary">Roll Number</span>
-                  <span className="font-bold text-text-primary font-mono">{markedStudentDetails.rollNo}</span>
                 </div>
                 <div className="flex justify-between border-b border-color pb-2">
                   <span className="text-text-secondary">Sign-in Time</span>
@@ -2194,167 +2698,8 @@ export default function App() {
                   <span className="font-bold text-10 text-text-primary">Google Apps Script Code</span>
                   <button 
                     onClick={() => {
-                      const code = `function doPost(e) {
-  try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var data = JSON.parse(e.postData.contents);
-    
-    // Check if payload is the new structured format or old flat format
-    var isStructured = data && data.metadata && data.students;
-    
-    // Check if the sheet already has the structured layout headers at Row 6
-    var hasStructuredLayout = sheet.getLastRow() >= 6 && 
-      sheet.getRange("A6").getValue().toString().toLowerCase() === "s.no";
-    
-    if (isStructured && !hasStructuredLayout) {
-      // Clear any old or mismatched flat layout to prevent column shifts
-      sheet.clear();
-      
-      // Header Title
-      sheet.getRange("A1").setValue(data.metadata.title);
-      sheet.getRange("A1").setFontWeight("bold").setFontSize(14);
-      sheet.getRange("A1:G1").merge().setHorizontalAlignment("center");
-      
-      // Metadata Row 2
-      sheet.getRange("A2").setValue("Classroom Code:");
-      sheet.getRange("A2").setFontWeight("bold");
-      sheet.getRange("B2").setValue(data.metadata.classroomCode);
-      sheet.getRange("E2").setValue("Department:");
-      sheet.getRange("E2").setFontWeight("bold");
-      sheet.getRange("F2").setValue(data.metadata.department);
-      
-      // Metadata Row 3
-      sheet.getRange("A3").setValue("Session Date:");
-      sheet.getRange("A3").setFontWeight("bold");
-      sheet.getRange("B3").setValue(data.metadata.date);
-      sheet.getRange("E3").setValue("Year:");
-      sheet.getRange("E3").setFontWeight("bold");
-      sheet.getRange("F3").setValue(data.metadata.year);
-
-      // Metadata Row 4
-      sheet.getRange("A4").setValue("Faculty In-Charge:");
-      sheet.getRange("A4").setFontWeight("bold");
-      sheet.getRange("B4").setValue(data.metadata.teacherName);
-      sheet.getRange("E4").setValue("Section:");
-      sheet.getRange("E4").setFontWeight("bold");
-      sheet.getRange("F4").setValue(data.metadata.section);
-      
-      // Column Headers in Row 6
-      var headers = [
-        "S.No", 
-        "Register Number", 
-        "Student ID", 
-        "Student Name", 
-        "Time Marked", 
-        "Sign-in Method", 
-        "Device Status"
-      ];
-      sheet.getRange(6, 1, 1, 7).setValues([headers]);
-      
-      // Style header row (Row 6)
-      var headerRange = sheet.getRange("A6:G6");
-      headerRange.setFontWeight("bold");
-      headerRange.setBackground("#0f4c81");
-      headerRange.setFontColor("#ffffff");
-      headerRange.setHorizontalAlignment("center");
-    } else if (!isStructured && sheet.getLastRow() === 0) {
-      // Fallback for old flat format
-      var headers = [
-        "Register Number", 
-        "Roll Number", 
-        "Student Name", 
-        "Timestamp", 
-        "Device Status", 
-        "Marking Method", 
-        "Course Code & Name", 
-        "Class Section"
-      ];
-      sheet.appendRow(headers);
-    }
-    
-    // Get the student list based on format
-    var studentsList = isStructured ? data.students : (Array.isArray(data) ? data : []);
-    
-    // Append each student's attendance row
-    for (var i = 0; i < studentsList.length; i++) {
-      var student = studentsList[i];
-      var alreadyExists = false;
-      var lastRow = sheet.getLastRow();
-      
-      if (isStructured) {
-        if (lastRow > 6) {
-          var range = sheet.getRange(7, 3, lastRow - 6, 1); // Check Column C (Student ID) for duplicates
-          var values = range.getValues();
-          for (var j = 0; j < values.length; j++) {
-            if (values[j][0].toString().toLowerCase() === student.regNo.toLowerCase()) {
-              alreadyExists = true;
-              break;
-            }
-          }
-        }
-        
-        if (!alreadyExists) {
-          sheet.appendRow([
-            Math.max(1, sheet.getLastRow() - 5),
-            "'" + student.rollNo, // Column B: Register Number (numeric, e.g. 2303412510621003)
-            student.regNo.toUpperCase(), // Column C: Student ID (alphanumeric, e.g. SEC23EC123)
-            student.name,
-            student.timestamp,
-            student.method,
-            student.deviceStatus
-          ]);
-        }
-      } else {
-        if (lastRow > 1) {
-          var range = sheet.getRange(2, 1, lastRow - 1, 1);
-          var values = range.getValues();
-          for (var j = 0; j < values.length; j++) {
-            if (values[j][0].toString().toLowerCase() === student.regNo.toLowerCase()) {
-              alreadyExists = true;
-              break;
-            }
-          }
-        }
-        
-        if (!alreadyExists) {
-          sheet.appendRow([
-            student.regNo.toUpperCase(),
-            "'" + student.rollNo,
-            student.name,
-            student.timestamp,
-            student.deviceStatus,
-            student.method,
-            student.course || "",
-            student.class || ""
-          ]);
-        }
-      }
-    }
-    
-    // Set explicit column widths to prevent merged A1:G1 header cells from expanding Column A
-    if (lastRow >= 1) {
-      if (isStructured) {
-        sheet.setColumnWidth(1, 50);  // S.No
-        sheet.setColumnWidth(2, 140); // Register Number (e.g. 2303412510621003)
-        sheet.setColumnWidth(3, 110); // Student ID (e.g. SEC23EC123)
-        sheet.setColumnWidth(4, 180); // Student Name
-        sheet.setColumnWidth(5, 100); // Time Marked
-        sheet.setColumnWidth(6, 120); // Sign-in Method
-        sheet.setColumnWidth(7, 120); // Device Status
-      } else {
-        sheet.autoResizeColumns(1, 8);
-      }
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", count: studentsList.length }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`;
-                      navigator.clipboard.writeText(code);
-                      alert("Code template copied to clipboard!");
+                      navigator.clipboard.writeText(APPS_SCRIPT_DOPOST);
+                      alert("Google Apps Script code copied to clipboard!");
                     }}
                     className="flex items-center gap-1 hover:text-text-primary border-none bg-transparent cursor-pointer font-bold text-10 text-cyan-400"
                   >
@@ -2362,153 +2707,7 @@ export default function App() {
                   </button>
                 </div>
                 <pre className="bg-[#0f172a] border border-color p-3 rounded-b-lg font-mono text-[9px] overflow-auto text-slate-300 h-48 scrollbar text-left">
-{`function doPost(e) {
-  try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var data = JSON.parse(e.postData.contents);
-    
-    var isStructured = data && data.metadata && data.students;
-    
-    // Check if the sheet already has the structured layout headers at Row 6
-    var hasStructuredLayout = sheet.getLastRow() >= 6 && 
-      sheet.getRange("A6").getValue().toString().toLowerCase() === "s.no";
-    
-    if (isStructured && !hasStructuredLayout) {
-      sheet.clear();
-      
-      sheet.getRange("A1").setValue(data.metadata.title);
-      sheet.getRange("A1").setFontWeight("bold").setFontSize(14);
-      sheet.getRange("A1:G1").merge().setHorizontalAlignment("center");
-      
-      sheet.getRange("A2").setValue("Classroom Code:");
-      sheet.getRange("A2").setFontWeight("bold");
-      sheet.getRange("B2").setValue(data.metadata.classroomCode);
-      sheet.getRange("E2").setValue("Department:");
-      sheet.getRange("E2").setFontWeight("bold");
-      sheet.getRange("F2").setValue(data.metadata.department);
-      
-      sheet.getRange("A3").setValue("Session Date:");
-      sheet.getRange("A3").setFontWeight("bold");
-      sheet.getRange("B3").setValue(data.metadata.date);
-      sheet.getRange("E3").setValue("Year:");
-      sheet.getRange("E3").setFontWeight("bold");
-      sheet.getRange("F3").setValue(data.metadata.year);
-
-      sheet.getRange("A4").setValue("Faculty In-Charge:");
-      sheet.getRange("A4").setFontWeight("bold");
-      sheet.getRange("B4").setValue(data.metadata.teacherName);
-      sheet.getRange("E4").setValue("Section:");
-      sheet.getRange("E4").setFontWeight("bold");
-      sheet.getRange("F4").setValue(data.metadata.section);
-      
-      var headers = [
-        "S.No", 
-        "Register Number", 
-        "Student ID", 
-        "Student Name", 
-        "Time Marked", 
-        "Sign-in Method", 
-        "Device Status"
-      ];
-      sheet.getRange(6, 1, 1, 7).setValues([headers]);
-      
-      var headerRange = sheet.getRange("A6:G6");
-      headerRange.setFontWeight("bold");
-      headerRange.setBackground("#0f4c81");
-      headerRange.setFontColor("#ffffff");
-      headerRange.setHorizontalAlignment("center");
-    } else if (!isStructured && sheet.getLastRow() === 0) {
-      var headers = [
-        "Register Number", 
-        "Roll Number", 
-        "Student Name", 
-        "Timestamp", 
-        "Device Status", 
-        "Marking Method", 
-        "Course Code & Name", 
-        "Class Section"
-      ];
-      sheet.appendRow(headers);
-    }
-    
-    var studentsList = isStructured ? data.students : (Array.isArray(data) ? data : []);
-    
-    for (var i = 0; i < studentsList.length; i++) {
-      var student = studentsList[i];
-      var alreadyExists = false;
-      var lastRow = sheet.getLastRow();
-      
-      if (isStructured) {
-        if (lastRow > 6) {
-          var range = sheet.getRange(7, 3, lastRow - 6, 1);
-          var values = range.getValues();
-          for (var j = 0; j < values.length; j++) {
-            if (values[j][0].toString().toLowerCase() === student.regNo.toLowerCase()) {
-              alreadyExists = true;
-              break;
-            }
-          }
-        }
-        
-        if (!alreadyExists) {
-          sheet.appendRow([
-            Math.max(1, sheet.getLastRow() - 5),
-            "'" + student.rollNo, // Column B: Register Number (numeric, e.g. 2303412510621003)
-            student.regNo.toUpperCase(), // Column C: Student ID (alphanumeric, e.g. SEC23EC123)
-            student.name,
-            student.timestamp,
-            student.method,
-            student.deviceStatus
-          ]);
-        }
-      } else {
-        if (lastRow > 1) {
-          var range = sheet.getRange(2, 1, lastRow - 1, 1);
-          var values = range.getValues();
-          for (var j = 0; j < values.length; j++) {
-            if (values[j][0].toString().toLowerCase() === student.regNo.toLowerCase()) {
-              alreadyExists = true;
-              break;
-            }
-          }
-        }
-        
-        if (!alreadyExists) {
-          sheet.appendRow([
-            student.regNo.toUpperCase(),
-            "'" + student.rollNo,
-            student.name,
-            student.timestamp,
-            student.deviceStatus,
-            student.method,
-            student.course || "",
-            student.class || ""
-          ]);
-        }
-      }
-    }
-    
-    if (lastRow >= 1) {
-      if (isStructured) {
-        sheet.setColumnWidth(1, 50);  // S.No
-        sheet.setColumnWidth(2, 140); // Register Number
-        sheet.setColumnWidth(3, 110); // Student ID
-        sheet.setColumnWidth(4, 180); // Student Name
-        sheet.setColumnWidth(5, 100); // Time Marked
-        sheet.setColumnWidth(6, 120); // Sign-in Method
-        sheet.setColumnWidth(7, 120); // Device Status
-      } else {
-        sheet.autoResizeColumns(1, 8);
-      }
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", count: studentsList.length }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`}
+                  {APPS_SCRIPT_DOPOST}
                 </pre>
               </div>
             </div>
@@ -2696,8 +2895,8 @@ export default function App() {
               <h4 className="font-bold text-text-primary uppercase tracking-wider text-10 mt-3 border-b border-color pb-1">1. Format Spreadsheet Tabs</h4>
               <ul className="list-disc pl-4 space-y-1 text-10">
                 <li>Create a sheet tab named <strong className="text-text-primary">Faculty</strong>. Add headers: <code className="font-mono text-purple-400 font-bold">Username</code> | <code className="font-mono text-purple-400 font-bold">Password</code> | <code className="font-mono text-purple-400 font-bold">Name</code> | <code className="font-mono text-purple-400 font-bold">Department</code></li>
-                <li>Create a tab named <strong className="text-text-primary">Students</strong>. Add headers: <code className="font-mono text-purple-400 font-bold">Register Number</code> | <code className="font-mono text-purple-400 font-bold">Roll Number</code> | <code className="font-mono text-purple-400 font-bold">Student Name</code> | <code className="font-mono text-purple-400 font-bold">Department</code> | <code className="font-mono text-purple-400 font-bold">Section</code> | <code className="font-mono text-purple-400 font-bold">Year</code></li>
-                <li>Create a tab named <strong className="text-text-primary">Courses</strong>. Add headers: <code className="font-mono text-purple-400 font-bold">Course Code</code> | <code className="font-mono text-purple-400 font-bold">Course Name</code> | <code className="font-mono text-purple-400 font-bold">Department</code></li>
+                <li>Create a tab named <strong className="text-text-primary">Students</strong>. Add headers: <code className="font-mono text-purple-400 font-bold">Student ID</code> | <code className="font-mono text-purple-400 font-bold">Student Name</code> | <code className="font-mono text-purple-400 font-bold">Department</code> | <code className="font-mono text-purple-400 font-bold">Section</code> | <code className="font-mono text-purple-400 font-bold">Year</code></li>
+                <li>Create a tab named <strong className="text-text-primary">Classrooms</strong>. Add headers: <code className="font-mono text-purple-400 font-bold">Class Code</code> | <code className="font-mono text-purple-400 font-bold">Latitude</code> | <code className="font-mono text-purple-400 font-bold">Longitude</code> | <code className="font-mono text-purple-400 font-bold">Radius</code></li>
               </ul>
 
               <h4 className="font-bold text-text-primary uppercase tracking-wider text-10 mt-3 border-b border-color pb-1">2. Add Apps Script Code</h4>
@@ -2708,101 +2907,7 @@ export default function App() {
                   <span className="font-bold text-10 text-text-primary">Roster DB Script Code</span>
                   <button 
                     onClick={() => {
-                      const code = `function doGet(e) {
-  // Security Access Authorization Check (Prevents public data exposure)
-  var SYNC_KEY = "sairamsynckey2026"; // Feel free to customize this key!
-  var requestKey = e && e.parameter && e.parameter.key ? e.parameter.key.toString().trim() : "";
-  if (requestKey !== SYNC_KEY) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Unauthorized access. Invalid sync key." }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    
-    var facultySheet = ss.getSheetByName("Faculty");
-    var facultyData = [];
-    if (facultySheet) {
-      var facultyRows = facultySheet.getDataRange().getValues();
-      var headers = facultyRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < facultyRows.length; i++) {
-        var row = facultyRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "username" || key === "faculty id") item.username = row[j].toString().toLowerCase().trim();
-          else if (key === "password") item.password = row[j].toString().trim();
-          else if (key === "name" || key === "faculty name") item.name = row[j].toString().trim();
-          else if (key === "department" || key === "dept") item.dept = row[j].toString().trim();
-        }
-        if (item.username && item.password) facultyData.push(item);
-      }
-    }
-    
-    var studentSheet = ss.getSheetByName("Students");
-    var studentData = [];
-    if (studentSheet) {
-      var studentRows = studentSheet.getDataRange().getValues();
-      var headers = studentRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < studentRows.length; i++) {
-        var row = studentRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "student id" || key === "id") {
-            item.regNo = row[j].toString().toLowerCase().trim();
-          } else if (key === "register number" || key === "regno" || key === "reg no" || key === "roll number" || key === "rollno" || key === "roll no") {
-            item.rollNo = row[j].toString().trim();
-          } else if (key === "student name" || key === "name") {
-            item.name = row[j].toString().trim();
-          } else if (key === "department" || key === "dept") {
-            item.dept = row[j].toString().trim();
-          } else if (key === "section" || key === "sec") {
-            item.sec = row[j].toString().trim();
-          } else if (key === "year") {
-            item.year = row[j].toString().trim();
-          }
-        }
-        if (item.regNo) studentData.push(item);
-      }
-    }
-
-    var classroomsSheet = ss.getSheetByName("Classrooms");
-    var classroomsData = [];
-    if (classroomsSheet) {
-      var classroomsRows = classroomsSheet.getDataRange().getValues();
-      var headers = classroomsRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < classroomsRows.length; i++) {
-        var row = classroomsRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "class code" || key === "classroom code" || key === "code") {
-            item.classCode = row[j].toString().toUpperCase().trim();
-          } else if (key === "latitude" || key === "lat") {
-            item.latitude = row[j].toString().trim();
-          } else if (key === "longitude" || key === "lng") {
-            item.longitude = row[j].toString().trim();
-          } else if (key === "radius") {
-            item.radius = row[j].toString().trim();
-          }
-        }
-        if (item.classCode && item.latitude && item.longitude) classroomsData.push(item);
-      }
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, classrooms: classroomsData }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}
-`;
-                      navigator.clipboard.writeText(code);
+                      navigator.clipboard.writeText(APPS_SCRIPT_DOGET);
                       alert("Roster DB script copied to clipboard!");
                     }}
                     className="text-10 font-bold text-cyan-400 hover:text-cyan-300 border-none bg-transparent cursor-pointer flex items-center gap-1"
@@ -2811,99 +2916,7 @@ export default function App() {
                   </button>
                 </div>
                 <pre className="bg-[#0f172a] border border-color p-3 rounded-b-lg font-mono text-[9px] overflow-auto text-slate-300 h-40 scrollbar text-left">
-{`function doGet(e) {
-  // Security Access Authorization Check (Prevents public data exposure)
-  var SYNC_KEY = "sairamsynckey2026"; // Feel free to customize this key!
-  var requestKey = e && e.parameter && e.parameter.key ? e.parameter.key.toString().trim() : "";
-  if (requestKey !== SYNC_KEY) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Unauthorized access. Invalid sync key." }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    
-    var facultySheet = ss.getSheetByName("Faculty");
-    var facultyData = [];
-    if (facultySheet) {
-      var facultyRows = facultySheet.getDataRange().getValues();
-      var headers = facultyRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < facultyRows.length; i++) {
-        var row = facultyRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "username" || key === "faculty id") item.username = row[j].toString().toLowerCase().trim();
-          else if (key === "password") item.password = row[j].toString().trim();
-          else if (key === "name" || key === "faculty name") item.name = row[j].toString().trim();
-          else if (key === "department" || key === "dept") item.dept = row[j].toString().trim();
-        }
-        if (item.username && item.password) facultyData.push(item);
-      }
-    }
-    
-    var studentSheet = ss.getSheetByName("Students");
-    var studentData = [];
-    if (studentSheet) {
-      var studentRows = studentSheet.getDataRange().getValues();
-      var headers = studentRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < studentRows.length; i++) {
-        var row = studentRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "student id" || key === "id") {
-            item.regNo = row[j].toString().toLowerCase().trim();
-          } else if (key === "register number" || key === "regno" || key === "reg no" || key === "roll number" || key === "rollno" || key === "roll no") {
-            item.rollNo = row[j].toString().trim();
-          } else if (key === "student name" || key === "name") {
-            item.name = row[j].toString().trim();
-          } else if (key === "department" || key === "dept") {
-            item.dept = row[j].toString().trim();
-          } else if (key === "section" || key === "sec") {
-            item.sec = row[j].toString().trim();
-          } else if (key === "year") {
-            item.year = row[j].toString().trim();
-          }
-        }
-        if (item.regNo) studentData.push(item);
-      }
-    }
-
-    var classroomsSheet = ss.getSheetByName("Classrooms");
-    var classroomsData = [];
-    if (classroomsSheet) {
-      var classroomsRows = classroomsSheet.getDataRange().getValues();
-      var headers = classroomsRows[0].map(function(h) { return h.toString().toLowerCase().trim(); });
-      
-      for (var i = 1; i < classroomsRows.length; i++) {
-        var row = classroomsRows[i];
-        var item = {};
-        for (var j = 0; j < headers.length; j++) {
-          var key = headers[j];
-          if (key === "class code" || key === "classroom code" || key === "code") {
-            item.classCode = row[j].toString().toUpperCase().trim();
-          } else if (key === "latitude" || key === "lat") {
-            item.latitude = row[j].toString().trim();
-          } else if (key === "longitude" || key === "lng") {
-            item.longitude = row[j].toString().trim();
-          } else if (key === "radius") {
-            item.radius = row[j].toString().trim();
-          }
-        }
-        if (item.classCode && item.latitude && item.longitude) classroomsData.push(item);
-      }
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", faculty: facultyData, students: studentData, classrooms: classroomsData }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`}
+                  {APPS_SCRIPT_DOGET}
                 </pre>
               </div>
 
@@ -3045,17 +3058,7 @@ export default function App() {
                 />
               </div>
 
-              <div>
-                <label className="block text-10 font-semibold text-text-secondary uppercase mb-1">Register Number</label>
-                <input 
-                  type="text" 
-                  required
-                  placeholder="e.g. 1234567890123456" 
-                  value={editStudentRoll} 
-                  onChange={e => setEditStudentRoll(e.target.value)}
-                  className="glass-input text-xs"
-                />
-              </div>
+
 
               <div>
                 <label className="block text-10 font-semibold text-text-secondary uppercase mb-1">Student ID</label>
