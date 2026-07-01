@@ -1552,13 +1552,14 @@ export default function App() {
                       {getQrUrl() ? (
                         <QRCodeSVG 
                           value={getQrUrl()} 
-                          size={280}
-                          level="Q"
+                          size={450}
+                          level="L"
                           fgColor="#0f172a"
-                          includeMargin={false}
+                          includeMargin={true}
+                          className="w-full max-w-[450px] h-auto"
                         />
                       ) : (
-                        <div className="w-[280px] h-[280px] flex items-center justify-center text-text-primary">Generating QR...</div>
+                        <div className="w-full max-w-[450px] aspect-square flex items-center justify-center text-text-primary">Generating QR...</div>
                       )}
                     </div>
                     
@@ -1921,10 +1922,10 @@ export default function App() {
                       <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Class Access Code</label>
                       <input 
                         type="text" 
-                        maxLength={5}
-                        placeholder="Enter 5-digit Access Code" 
+                        maxLength={10}
+                        placeholder="e.g. G3103" 
                         value={classCode} 
-                        onChange={e => setClassCode(e.target.value.replace(/\D/g, ''))}
+                        onChange={e => setClassCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
                         className="glass-input text-center font-bold tracking-widest text-lg font-mono" 
                         required 
                       />
