@@ -544,6 +544,13 @@ export default function App() {
       
       if (res.ok) {
         setRosterSyncMsg(`✓ Loaded ${data.facultyCount} teachers, ${data.studentCount} students & ${data.classroomCount || 0} classrooms!`);
+        // Proactively refresh classrooms list locally
+        fetch('/api/database/classrooms')
+          .then(r => r.json())
+          .then(list => {
+            if (Array.isArray(list)) setClassroomsList(list);
+          })
+          .catch(() => {});
       } else {
         setRosterSyncMsg(`❌ Sync failed: ${data.error || 'Server error'}`);
       }

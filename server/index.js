@@ -751,6 +751,7 @@ app.get('/api/database/classrooms', (req, res) => {
 // Dynamically synchronize the College Faculty & Student Roster database from Google Sheets
 app.post('/api/database/sync-roster', async (req, res) => {
   const { rosterDbUrl } = req.body;
+  console.log("[Roster Sync Debug] Sync request received for URL:", rosterDbUrl);
   if (!rosterDbUrl) {
     return res.status(400).json({ error: "Missing Roster Web App URL parameter" });
   }
@@ -760,27 +761,51 @@ app.post('/api/database/sync-roster', async (req, res) => {
     const timeoutId = setTimeout(() => controller.abort(), 6500); // 6.5s timeout guard
     const response = await fetch(rosterDbUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
-    const data = await response.json();
+    
+    const text = await response.text();
+    console.log("[Roster Sync Debug] Raw sheet response length:", text.length);
+    
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseErr) {
+      console.error("[Roster Sync Debug] JSON parse failed. Raw response snippet:", text.substring(0, 300));
+      return res.status(400).json({ error: "Roster Sheet returned invalid JSON. Verify Web App deployment." });
+    }
 
-    if (data && data.status === "success" && Array.isArray(data.faculty) && Array.isArray(data.students)) {
-      if (data.faculty.length === 0 || data.students.length === 0) {
+    console.log("[Roster Sync Debug] Parsed keys:", Object.keys(data));
+    if (data && data.status === "success") {
+      const faculty = data.faculty || [];
+      const students = data.students || [];
+      
+      console.log(`[Roster Sync Debug] Retrieved: ${faculty.length} faculty, ${students.length} students.`);
+
+      if (faculty.length === 0 || students.length === 0) {
         return res.status(400).json({ 
           error: "Synchronization failed. Your Google Sheet 'Students' or 'Faculty' sheet tab appears to be empty." 
         });
       }
 
-      FACULTY_DIRECTORY = data.faculty;
-      COLLEGE_STUDENTS_DIRECTORY = data.students;
+      FACULTY_DIRECTORY = faculty;
+      COLLEGE_STUDENTS_DIRECTORY = students;
       
+      // Handle both classrooms and old courses formats
       if (Array.isArray(data.classrooms)) {
         CLASSROOMS_DIRECTORY = data.classrooms;
+      } else if (Array.isArray(data.courses)) {
+        CLASSROOMS_DIRECTORY = data.courses.map(c => ({
+          classCode: c.courseCode || c.code || "UNKNOWN",
+          latitude: "12.960200",
+          longitude: "80.057000",
+          radius: "500"
+        }));
       }
-      
+
       // Cache synced directory locally on disk
       try {
         fs.writeFileSync(
           cachePath,
-          JSON.stringify({ faculty: data.faculty, students: data.students, classrooms: CLASSROOMS_DIRECTORY }, null, 2)
+          JSON.stringify({ faculty: FACULTY_DIRECTORY, students: COLLEGE_STUDENTS_DIRECTORY, classrooms: CLASSROOMS_DIRECTORY }, null, 2)
         );
         console.log("[DB Cache] Synced roster written to disk cache.");
       } catch (err) {
@@ -798,7 +823,7 @@ app.post('/api/database/sync-roster', async (req, res) => {
       });
     } else {
       res.status(400).json({ 
-        error: "Invalid roster schema. Roster Sheets Web App must return { status: 'success', faculty: [...], students: [...] }" 
+        error: "Invalid roster schema. Web App returned status: " + (data ? data.status : "undefined")
       });
     }
   } catch (error) {
