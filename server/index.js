@@ -759,7 +759,13 @@ app.post('/api/database/sync-roster', async (req, res) => {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6500); // 6.5s timeout guard
-    const response = await fetch(rosterDbUrl, { signal: controller.signal });
+    
+    // Automatically append the security sync authorization key parameter
+    const syncKey = process.env.ROSTER_SYNC_KEY || "sairamsynckey2026";
+    const separator = rosterDbUrl.includes('?') ? '&' : '?';
+    const authorizedUrl = `${rosterDbUrl}${separator}key=${syncKey}`;
+    
+    const response = await fetch(authorizedUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
     
     const text = await response.text();

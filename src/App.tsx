@@ -2709,6 +2709,14 @@ export default function App() {
                   <button 
                     onClick={() => {
                       const code = `function doGet(e) {
+  // Security Access Authorization Check (Prevents public data exposure)
+  var SYNC_KEY = "sairamsynckey2026"; // Feel free to customize this key!
+  var requestKey = e && e.parameter && e.parameter.key ? e.parameter.key.toString().trim() : "";
+  if (requestKey !== SYNC_KEY) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Unauthorized access. Invalid sync key." }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     
@@ -2804,6 +2812,14 @@ export default function App() {
                 </div>
                 <pre className="bg-[#0f172a] border border-color p-3 rounded-b-lg font-mono text-[9px] overflow-auto text-slate-300 h-40 scrollbar text-left">
 {`function doGet(e) {
+  // Security Access Authorization Check (Prevents public data exposure)
+  var SYNC_KEY = "sairamsynckey2026"; // Feel free to customize this key!
+  var requestKey = e && e.parameter && e.parameter.key ? e.parameter.key.toString().trim() : "";
+  if (requestKey !== SYNC_KEY) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Unauthorized access. Invalid sync key." }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     
