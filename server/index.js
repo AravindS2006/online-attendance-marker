@@ -140,7 +140,7 @@ app.post('/api/faculty/login', (req, res) => {
   }
 
   const faculty = FACULTY_DIRECTORY.find(
-    f => f.username.toLowerCase() === username.trim().toLowerCase() && f.password === password
+    f => f && f.username && String(f.username).toLowerCase().trim() === String(username).toLowerCase().trim() && String(f.password).trim() === String(password).trim()
   );
 
   if (!faculty) {
@@ -162,14 +162,14 @@ app.post('/api/faculty/change-password', (req, res) => {
   }
 
   const faculty = FACULTY_DIRECTORY.find(
-    f => f.username.toLowerCase() === username.trim().toLowerCase()
+    f => f && f.username && String(f.username).toLowerCase().trim() === String(username).toLowerCase().trim()
   );
 
   if (!faculty) {
     return res.status(404).json({ error: "Faculty account not found" });
   }
 
-  if (faculty.password !== currentPassword) {
+  if (String(faculty.password).trim() !== String(currentPassword).trim()) {
     return res.status(401).json({ error: "Incorrect current password" });
   }
 
