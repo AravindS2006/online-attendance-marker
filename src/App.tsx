@@ -86,6 +86,40 @@ export default function App() {
   const [scannerError, setScannerError] = useState('');
   const scannerRef = useRef<Html5Qrcode | null>(null);
 
+  // Camera Zoom Control States
+  const [zoomSupported, setZoomSupported] = useState(false);
+  const [minZoom, setMinZoom] = useState(1);
+  const [maxZoom, setMaxZoom] = useState(4);
+  const [currentZoom, setCurrentZoom] = useState(1);
+
+  // Helper to retrieve the active camera media stream video track
+  const getCameraTrack = (): MediaStreamTrack | null => {
+    const videoElem = document.querySelector("#qr-reader video") as HTMLVideoElement;
+    if (videoElem && videoElem.srcObject) {
+      const stream = videoElem.srcObject as MediaStream;
+      const tracks = stream.getVideoTracks();
+      if (tracks.length > 0) {
+        return tracks[0];
+      }
+    }
+    return null;
+  };
+
+  // Dynamically apply camera zoom constraints
+  const handleZoomChange = async (val: number) => {
+    setCurrentZoom(val);
+    const track = getCameraTrack();
+    if (track) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ zoom: val } as any]
+        });
+      } catch (err) {
+        console.warn("Failed to apply camera zoom constraint:", err);
+      }
+    }
+  };
+
   // Faculty login states
   const [facultyUser, setFacultyUser] = useState('');
   const [facultyPass, setFacultyPass] = useState('');
@@ -396,6 +430,27 @@ export default function App() {
             // silent fail for constant polling
           }
         );
+
+        // Fetch zoom capabilities once the stream is running
+        setTimeout(() => {
+          const track = getCameraTrack();
+          if (track) {
+            try {
+              const capabilities = track.getCapabilities() as any;
+              if (capabilities && capabilities.zoom) {
+                setZoomSupported(true);
+                setMinZoom(capabilities.zoom.min || 1);
+                setMaxZoom(capabilities.zoom.max || 4);
+                setCurrentZoom(capabilities.zoom.min || 1);
+              } else {
+                setZoomSupported(false);
+              }
+            } catch (err) {
+              console.warn("Could not read camera capabilities", err);
+              setZoomSupported(false);
+            }
+          }
+        }, 1200);
       } catch (err: any) {
         console.error("Camera access error", err);
         setScannerError("Camera access denied. Please grant camera permission.");
@@ -404,6 +459,7 @@ export default function App() {
   };
 
   const stopScanner = async () => {
+    setZoomSupported(false);
     if (scannerRef.current) {
       if (scannerRef.current.isScanning) {
         try {
@@ -2500,6 +2556,51 @@ export default function App() {
               <div className="scanner-laser"></div>
               <div id="qr-reader"></div>
             </div>
+
+            {/* Zoom Slider and Buttons controls */}
+            {zoomSupported && (
+              <div className="mt-4 px-2 space-y-2 text-left border border-white/5 bg-slate-500/5 p-3 rounded-xl">
+                <div className="flex justify-between items-center text-[10px] font-bold text-text-secondary uppercase">
+                  <span>Camera Zoom ({currentZoom.toFixed(1)}x)</span>
+                  <div className="flex gap-1">
+                    {[1, 2, 3].map(z => (
+                      <button
+                        key={z}
+                        type="button"
+                        onClick={() => handleZoomChange(Math.min(maxZoom, Math.max(minZoom, z)))}
+                        className={`px-2 py-0.5 text-[9px] rounded font-bold transition-all border ${
+                          Math.abs(currentZoom - z) < 0.1
+                            ? 'bg-cyan-400 border-cyan-400 text-slate-900'
+                            : 'bg-slate-800/40 border-color text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        {z}x
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => handleZoomChange(maxZoom)}
+                      className={`px-2 py-0.5 text-[9px] rounded font-bold transition-all border ${
+                        Math.abs(currentZoom - maxZoom) < 0.1
+                          ? 'bg-cyan-400 border-cyan-400 text-slate-900'
+                          : 'bg-slate-800/40 border-color text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      Max
+                    </button>
+                  </div>
+                </div>
+                <input 
+                  type="range"
+                  min={minZoom}
+                  max={maxZoom}
+                  step={0.1}
+                  value={currentZoom}
+                  onChange={e => handleZoomChange(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-slate-800/40 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-color"
+                />
+              </div>
+            )}
             
             <p className="text-11 text-text-secondary mt-3">
               Point your camera at the QR code displayed on the classroom screen.
