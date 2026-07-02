@@ -934,7 +934,7 @@ app.get('/api/database/classrooms', (req, res) => {
 
 // Dynamically synchronize the College Faculty & Student Roster database from Google Sheets
 app.post('/api/database/sync-roster', async (req, res) => {
-  const { rosterDbUrl } = req.body;
+  const { rosterDbUrl, syncKey } = req.body;
   console.log("[Roster Sync Debug] Sync request received for URL:", rosterDbUrl);
   if (!rosterDbUrl) {
     return res.status(400).json({ error: "Missing Roster Web App URL parameter" });
@@ -945,9 +945,9 @@ app.post('/api/database/sync-roster', async (req, res) => {
     const timeoutId = setTimeout(() => controller.abort(), 6500); // 6.5s timeout guard
     
     // Automatically append the security sync authorization key parameter
-    const syncKey = process.env.ROSTER_SYNC_KEY || "sairamsynckey2026";
+    const activeSyncKey = syncKey || process.env.ROSTER_SYNC_KEY || "sairamsynckey2026";
     const separator = rosterDbUrl.includes('?') ? '&' : '?';
-    const authorizedUrl = `${rosterDbUrl}${separator}key=${syncKey}`;
+    const authorizedUrl = `${rosterDbUrl}${separator}key=${activeSyncKey}`;
     
     const response = await fetch(authorizedUrl, { signal: controller.signal });
     clearTimeout(timeoutId);

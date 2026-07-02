@@ -17,6 +17,10 @@
       "dest": "api/index.js"
     },
     {
+      "src": "/database",
+      "dest": "/index.html"
+    },
+    {
       "src": "/(.*)",
       "dest": "/$1"
     }

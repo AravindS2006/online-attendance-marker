@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   QrCode, Tv, CheckCircle2, MapPin, AlertTriangle, Loader2, 
   FileSpreadsheet, Users, X, Settings, Camera,
-  ChevronRight, Plus, RefreshCw, HelpCircle, Send, Smartphone, Lock, Clipboard, Edit2
+  ChevronRight, Plus, RefreshCw, HelpCircle, Send, Smartphone, Lock, Clipboard, Edit2, Database
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -104,10 +104,24 @@ const APPS_SCRIPT_DOGET = `function doGet(e) {
 
 const APPS_SCRIPT_DOPOST = `function doPost(e) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
     var data = JSON.parse(e.postData.contents);
-    
     var isStructured = data && data.metadata && data.students;
+    var sheet;
+    
+    if (isStructured) {
+      // Dynamic tab name based on class code, department and section
+      var tabName = (data.metadata.classroomCode + "_" + data.metadata.department + "_" + data.metadata.section)
+        .replace(/[^a-zA-Z0-9_\\-]/g, '')
+        .toUpperCase()
+        .trim();
+      sheet = ss.getSheetByName(tabName);
+      if (!sheet) {
+        sheet = ss.insertSheet(tabName);
+      }
+    } else {
+      sheet = ss.getActiveSheet();
+    }
     
     if (isStructured) {
       // 1. Initialize Sheet headers if it's a fresh/empty sheet
@@ -408,7 +422,7 @@ interface ClassLookupInfo {
 }
 
 export default function App() {
-  const [view, setView] = useState<'landing' | 'teacher_login' | 'teacher_setup' | 'teacher_dashboard' | 'student' | 'student_success'>('landing');
+  const [view, setView] = useState<'landing' | 'teacher_login' | 'teacher_setup' | 'teacher_dashboard' | 'student' | 'student_success' | 'database_admin'>('landing');
   
   // Teacher states
   const [teacherClassCode, setTeacherClassCode] = useState('');
@@ -490,6 +504,7 @@ export default function App() {
   const [classGeofence, setClassGeofence] = useState<{ latitude: number; longitude: number; radius: number } | null>(null);
   // Roster Sheet DB Sync States
   const [rosterUrl, setRosterUrl] = useState(() => localStorage.getItem('sairam_roster_url') || '');
+  const [syncKeyInput, setSyncKeyInput] = useState(() => localStorage.getItem('sairam_sync_key') || 'sairamsynckey2026');
   const [isSyncingRoster, setIsSyncingRoster] = useState(false);
   const [rosterSyncMsg, setRosterSyncMsg] = useState('');
   const [showRosterGuideModal, setShowRosterGuideModal] = useState(false);
@@ -519,9 +534,6 @@ export default function App() {
   const [editStudentName, setEditStudentName] = useState('');
   const [editStudentReg, setEditStudentReg] = useState('');
 
-  // Admin Setup lock states
-  const [adminKey, setAdminKey] = useState('');
-  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
 
   // OTP Progress Counter
   const [otpProgress, setOtpProgress] = useState(100);
@@ -533,6 +545,10 @@ export default function App() {
 
   // Detect query parameters on load (e.g. when QR code is scanned)
   useEffect(() => {
+    if (window.location.pathname === '/database' || window.location.hash === '#database') {
+      setView('database_admin');
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const sessionParam = params.get('session');
     const tokenParam = params.get('token');
@@ -572,9 +588,9 @@ export default function App() {
     }
   }, [classGeofence, view]);
 
-  // Sync active classrooms list when setup screen is loaded
+  // Sync active classrooms list when setup or database screen is loaded
   useEffect(() => {
-    if (view === 'teacher_setup') {
+    if (view === 'teacher_setup' || view === 'database_admin') {
       fetch('/api/database/classrooms')
         .then(res => res.json())
         .then(data => {
@@ -1020,12 +1036,13 @@ export default function App() {
     setIsSyncingRoster(true);
     setRosterSyncMsg("");
     localStorage.setItem('sairam_roster_url', rosterUrl);
+    localStorage.setItem('sairam_sync_key', syncKeyInput);
     
     try {
       const res = await fetch('/api/database/sync-roster', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rosterDbUrl: rosterUrl })
+        body: JSON.stringify({ rosterDbUrl: rosterUrl, syncKey: syncKeyInput })
       });
       const data = await res.json();
       
@@ -1759,92 +1776,117 @@ export default function App() {
                 </button>
               </form>
 
-              {/* Live Google Sheets Roster Sync Accordion */}
-              <div className="mt-6 border-t border-color pt-4 text-left">
-                <details className="group">
-                  <summary className="text-[10px] font-bold text-text-secondary uppercase cursor-pointer flex justify-between items-center hover:text-text-primary select-none">
-                    <span>🗄️ Connect College Roster Sheet (Custom DB)</span>
-                    <span className="text-10 text-cyan-400 group-open:rotate-180 transition-transform">▼</span>
-                  </summary>
-                  <div className="mt-3 space-y-3">
-                    {!isAdminUnlocked ? (
-                      <div className="space-y-2 p-3 bg-slate-50 border border-color rounded-xl">
-                        <label className="block text-[9px] font-bold text-text-secondary uppercase">Admin Password Required</label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="password"
-                            placeholder="Enter Admin Password"
-                            value={adminKey}
-                            onChange={e => setAdminKey(e.target.value)}
-                            className="glass-input py-1 text-xs"
-                          />
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              const expectedKey = import.meta.env.VITE_ADMIN_SYNC_PASSWORD || 'adminpassword';
-                              if (adminKey === expectedKey) {
-                                setIsAdminUnlocked(true);
-                                setAdminKey('');
-                              } else {
-                                alert("Incorrect admin password!");
-                              }
-                            }}
-                            className="btn-primary py-1 px-3.5 text-10 rounded-lg font-bold"
-                          >
-                            Unlock
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="text-[10px] text-text-muted leading-relaxed">
-                          Deploy your custom roster sheet Web App to instantly sync faculty credentials and student roll numbers, replacing all mock datasets.
-                        </p>
-                        
-                        <div className="space-y-2">
-                          <label className="block text-[9px] font-semibold text-text-secondary uppercase">Roster Web App URL</label>
-                          <input 
-                            type="url"
-                            placeholder="https://script.google.com/macros/s/..."
-                            value={rosterUrl}
-                            onChange={e => setRosterUrl(e.target.value)}
-                            className="glass-input py-1.5 text-xs"
-                          />
-                          
-                          <div className="flex gap-2">
-                            <button 
-                              type="button"
-                              onClick={handleSyncRoster}
-                              disabled={isSyncingRoster}
-                              className="btn-secondary py-1.5 px-3 text-[10px] rounded-lg flex-1 font-bold"
-                            >
-                              {isSyncingRoster ? "Syncing..." : "Sync Database"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShowRosterGuideModal(true)}
-                              className="btn-secondary py-1.5 px-3 text-[10px] rounded-lg font-bold"
-                            >
-                              Setup Guide
-                            </button>
-                          </div>
-                          
-                          {rosterSyncMsg && (
-                            <div className={`p-2 rounded text-[10px] font-bold ${
-                              rosterSyncMsg.startsWith('❌') || rosterSyncMsg.startsWith('⚠️')
-                                ? 'bg-red-500/5 text-red-400 border border-red-500/10'
-                                : 'bg-emerald-500/5 text-emerald-400 border border-emerald-500/10'
-                            }`}>
-                              {rosterSyncMsg}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </details>
+            </div>
+          </div>
+        )}
+
+        {/* ==========================================
+            VIEW 1.7: STANDALONE DATABASE MANAGEMENT BACKUP (/database)
+            ========================================== */}
+        {view === 'database_admin' && (
+          <div className="w-full max-w-md py-8 slide-up">
+            <div className="glass-panel p-8 border border-white/5 relative">
+              <div className="border-b border-color pb-4 mb-6 text-center">
+                <div className="mx-auto w-12 h-12 bg-cyan-500/10 rounded-full flex items-center justify-center mb-3">
+                  <Database size={24} className="text-cyan-400 animate-pulse" />
+                </div>
+                <h3 className="text-2xl font-black text-text-primary">Database Sync Panel</h3>
+                <p className="text-xs text-text-secondary mt-1">Direct Cache Backup & Synchronization</p>
               </div>
 
+              {/* Status Section */}
+              <div className="grid grid-cols-3 gap-2 mb-6">
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+                  <span className="block text-lg font-extrabold text-cyan-400">{classroomsList.length || 0}</span>
+                  <span className="text-[9px] font-semibold text-text-muted uppercase">Classrooms</span>
+                </div>
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+                  <span className="block text-lg font-extrabold text-green-400">
+                    {localStorage.getItem('sairam_roster_data') 
+                      ? JSON.parse(localStorage.getItem('sairam_roster_data') || '{}').faculty?.length || 0 
+                      : 0}
+                  </span>
+                  <span className="text-[9px] font-semibold text-text-muted uppercase">Faculty</span>
+                </div>
+                <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center">
+                  <span className="block text-lg font-extrabold text-purple-400">
+                    {localStorage.getItem('sairam_roster_data') 
+                      ? JSON.parse(localStorage.getItem('sairam_roster_data') || '{}').students?.length || 0 
+                      : 0}
+                  </span>
+                  <span className="text-[9px] font-semibold text-text-muted uppercase">Students</span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Roster Web App URL</label>
+                  <input 
+                    type="url"
+                    placeholder="Enter Google Sheets Web App URL"
+                    value={rosterUrl}
+                    onChange={e => setRosterUrl(e.target.value)}
+                    className="glass-input text-xs"
+                  />
+                  <p className="text-[9px] text-text-muted mt-1 leading-normal">
+                    Enter the published Google Apps Script URL containing the Student/Faculty lists.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-text-secondary uppercase mb-1">Security Sync Key (Optional)</label>
+                  <input 
+                    type="text"
+                    placeholder="Defaults to: sairamsynckey2026"
+                    value={syncKeyInput}
+                    onChange={e => setSyncKeyInput(e.target.value)}
+                    className="glass-input text-xs"
+                  />
+                  <p className="text-[9px] text-text-muted mt-1 leading-normal">
+                    This is fully automated. The server secures requests automatically with the key above unless overridden.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button 
+                    type="button"
+                    onClick={handleSyncRoster}
+                    disabled={isSyncingRoster}
+                    className="btn-primary flex-1 py-3"
+                  >
+                    {isSyncingRoster ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 size={16} className="animate-spin text-white" /> Syncing Cache...
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-2 text-white">
+                        <RefreshCw size={16} className="text-white" /> Resync Database
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {rosterSyncMsg && (
+                  <div className={`p-3 rounded-xl text-xs font-bold ${
+                    rosterSyncMsg.startsWith('❌') || rosterSyncMsg.startsWith('⚠️')
+                      ? 'bg-red-500/5 text-red-400 border border-red-500/10'
+                      : 'bg-green-500/5 text-green-400 border border-green-500/10'
+                  }`}>
+                    {rosterSyncMsg}
+                  </div>
+                )}
+
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    window.location.hash = '';
+                    setView('teacher_login');
+                  }}
+                  className="btn-secondary w-full py-3 text-xs"
+                >
+                  Back to Login
+                </button>
+              </div>
             </div>
           </div>
         )}
